@@ -10177,12 +10177,12 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
           tapeH: 0.016,
         });
 
-        // 2. 眼鏡少女 (A3) — すう的通緝照片下方，靠右對齊
+        // 2. 眼鏡少女 (A3) — すう的通緝照片下方，靠右對齊 (黑色大碎裂玻璃照)
         const GLASSES_GIRL_W = 0.292;
         const GLASSES_GIRL_H = 0.427;
         const GLASSES_GIRL_LEFT = WANTED_RIGHT - GLASSES_GIRL_W; // 1.598
         createDeskWallPoster({
-          texPath: '/assets/desk_poster_a3_1.png',
+          texPath: '/assets/desk_poster_a3_2.jpg',
           w: GLASSES_GIRL_W,
           h: GLASSES_GIRL_H,
           x: WANTED_RIGHT - GLASSES_GIRL_W / 2,
@@ -10190,12 +10190,12 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
           rotZ: 0,
         });
 
-        // 3. 黑眼鏡 (A4) — すう的通緝照片左邊，靠上對齊
+        // 3. 黑眼鏡 (A4) — すう的通緝照片左邊，靠上對齊 (黑框眼鏡妹)
         const BLACK_GLASSES_W = 0.216;
         const BLACK_GLASSES_H = 0.288;
         const BLACK_GLASSES_BOT = WANTED_TOP - BLACK_GLASSES_H; // 2.072
         createDeskWallPoster({
-          texPath: '/assets/desk_poster_a4_2.jpg',
+          texPath: '/assets/desk_poster_a4_1.jpg',
           w: BLACK_GLASSES_W,
           h: BLACK_GLASSES_H,
           x: WANTED_LEFT - POSTER_GAP - BLACK_GLASSES_W / 2,
@@ -10203,12 +10203,12 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
           rotZ: 0,
         });
 
-        // 4. 原涼海雨傘照片位替換為新海報 (A3: 751x1023) — 黑眼鏡跟通緝すう的夾角
+        // 4. 原涼海雨傘照片位替換為新海報 (A3) — 黑眼鏡跟通緝すう的夾角 (白色動漫眼鏡少女)
         const NEW_POSTER_W = 0.303;
         const NEW_POSTER_H = 0.412;
         const NEW_POSTER_BOT = BLACK_GLASSES_BOT - POSTER_GAP - NEW_POSTER_H; // 1.616
         createDeskWallPoster({
-          texPath: '/assets/desk_poster_a3_2.jpg',
+          texPath: '/assets/desk_poster_a3_1.png',
           w: NEW_POSTER_W,
           h: NEW_POSTER_H,
           x: WANTED_LEFT - POSTER_GAP - NEW_POSTER_W / 2,
@@ -10216,12 +10216,12 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
           rotZ: 0,
         });
 
-        // 5. Cos照片 (A4) — 眼鏡少女跟涼海すう的通緝照片的夾角之間
+        // 5. Cos照片 (A4) — 眼鏡少女跟涼海すう的通緝照片的夾角之間 (與黑框眼鏡妹換位)
         const COS_W = 0.216;
         const COS_H = 0.288;
         const COS_LEFT = GLASSES_GIRL_LEFT - POSTER_GAP - COS_W; // 1.338
         createDeskWallPoster({
-          texPath: '/assets/desk_poster_a4_1.jpg',
+          texPath: '/assets/desk_poster_a4_2.jpg',
           w: COS_W,
           h: COS_H,
           x: GLASSES_GIRL_LEFT - POSTER_GAP - COS_W / 2,
@@ -10299,14 +10299,12 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
           tapeH: 0.009,
         });
 
-        // 10. 應援棒舞台照 (寬度 = 整張4×6小卡 + Cos照的一半寬 = 0.274m，保持標準 A4 1:√2 比例) — 擺在小卡跟 Cos 照片下方
+        // 10. 應援棒舞台照 — 往下剛好一個46小卡的長度
         const BELOW_A4_W = Number((CARD_4X6_W + COS_W / 2).toFixed(3)); // 0.274m
         const BELOW_A4_H = Number((BELOW_A4_W * Math.SQRT2).toFixed(3)); // 0.387m
-        const CARD_BOT = A4_VERT_TOP - CARD_4X6_H;
-        const COS_BOT = WANTED_BOT - POSTER_GAP - COS_H;
-        const COS_RIGHT = GLASSES_GIRL_LEFT - POSTER_GAP;
-        const BELOW_A4_TOP = Math.min(CARD_BOT, COS_BOT) - POSTER_GAP;
-        const BELOW_A4_CENTER_X = (CARD_4X6_LEFT + COS_RIGHT) / 2;
+        const BELOW_A4_LEFT = CARD_4X6_LEFT;
+        const BELOW_A4_CENTER_X = BELOW_A4_LEFT + BELOW_A4_W / 2;
+        const BELOW_A4_TOP = A3_LAND_BOT - POSTER_GAP - CARD_4X6_H - POSTER_GAP;
         const belowUvRepeatY = Math.SQRT2 / (1567 / 1044); // ~0.9422 (zero distortion)
         createDeskWallPoster({
           texPath: '/assets/desk_poster_a4_land_below.jpg',
