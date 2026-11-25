@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { ChevronLeft, X } from 'lucide-react';
+import { ChevronLeft } from 'lucide-react';
 
 interface EscalatorMonologueSubpageProps {
   onClose: () => void;

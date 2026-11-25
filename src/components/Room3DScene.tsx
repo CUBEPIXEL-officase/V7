@@ -3,17 +3,9 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { X } from 'lucide-react';
 import { EventCalendar, CATEGORY_COLORS, getEventsForDate } from './EventCalendar';
-import { EscalatorMonologueSubpage, MONOLOGUE_TEXT } from './EscalatorMonologueSubpage';
+import { EscalatorMonologueSubpage } from './EscalatorMonologueSubpage';
 
-interface Room3DSceneProps {
-  onExitRoom?: () => void;
-  onOpenMenu?: () => void;
-  soundEnabled?: boolean;
-  onToggleSound?: () => void;
-  playFootstep?: () => void;
-}
-
-export const Room3DScene: React.FC<Room3DSceneProps> = () => {
+export const Room3DScene: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
 
   // User Request: "刪除抬頭 降低左右視角轉動 將視角轉動方式從360度改為T字(左右 下視角)"
@@ -57,11 +49,13 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
   const isCalendarModalOpenRef = useRef(false);
   const [isMonologueOpen, setIsMonologueOpen] = useState(false);
   const isMonologueOpenRef = useRef(false);
+  const [dakiSubtitle, setDakiSubtitle] = useState<string | null>(null);
+  const dakiSubtitleTimerRef = useRef<number | null>(null);
   const [viewLocation, setViewLocation] = useState<
-    'table' | 'cabinet' | 'door' | 'door2' | 'center' | 'desk' | 'capsule' | 'board'
+    'table' | 'cabinet' | 'door' | 'door2' | 'center' | 'desk' | 'capsule' | 'board' | 'showcase'
   >('table');
   const viewLocationRef = useRef<
-    'table' | 'cabinet' | 'door' | 'door2' | 'center' | 'desk' | 'capsule' | 'board'
+    'table' | 'cabinet' | 'door' | 'door2' | 'center' | 'desk' | 'capsule' | 'board' | 'showcase'
   >('table');
   const [activeRoom, setActiveRoom] = useState<RoomId>('lobby');
   const activeRoomRef = useRef<RoomId>('lobby');
@@ -90,16 +84,30 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
   const beybladeLid1OpenRef = useRef<boolean>(false);
   const beybladeLid1AngleRef = useRef<number>(0);
 
-  // Upper Capsule Bedside Light Switch & Dim Light-Blue Reading Light Refs
+  // Upper Capsule Bedside Light Switch & Unified Ceiling Lighting Refs
   const capsuleLightSwitchHitboxRef = useRef<THREE.Mesh | null>(null);
   const capsuleSwitchBtnRef = useRef<THREE.Mesh | null>(null);
   const capsuleSwitchLedMatRef = useRef<THREE.MeshStandardMaterial | null>(null);
   const capsuleCeilingLedMatRef = useRef<THREE.MeshStandardMaterial | null>(null);
+  const capsuleBlueStripMatRef = useRef<THREE.MeshStandardMaterial | null>(null);
   const capsuleMainLightBackRef = useRef<THREE.PointLight | null>(null);
   const capsuleMainLightFrontRef = useRef<THREE.PointLight | null>(null);
-  const capsuleReadingLensMatRef = useRef<THREE.MeshStandardMaterial | null>(null);
-  const capsuleReadingLightRef = useRef<THREE.PointLight | null>(null);
-  const capsuleLightModeRef = useRef<number>(0); // 0: 原本頂燈, 1: 暗淺藍閱讀燈, 2: 雙燈齊亮, 3: 全關
+  const capsuleLightModeRef = useRef<number>(0); // 0: 白色, 1: 藍色, 2: 藍色燈條, 3: 關燈
+
+  // Dakimakura Body Pillow Interactive Animation Refs (7-click sequence inside Upper Capsule Pod)
+  const dakiGroupRef = useRef<THREE.Group | null>(null);
+  const dakiHitboxRef = useRef<THREE.Mesh | null>(null);
+  const dakiClickCountRef = useRef<number>(0);
+  const dakiHasFlippedOnceRef = useRef<boolean>(false);
+  const dakiAnimModeRef = useRef<'idle_lean' | 'falling' | 'idle_fallen' | 'hop' | 'flip'>('idle_lean');
+  const dakiAnimElapsedRef = useRef<number>(0);
+  const dakiPose0Ref = useRef<{ pos: THREE.Vector3; quat: THREE.Quaternion } | null>(null);
+  const dakiPose1Ref = useRef<{ pos: THREE.Vector3; quat: THREE.Quaternion } | null>(null);
+  const dakiHopQuatRef = useRef<THREE.Quaternion | null>(null);
+  const dakiFlipQuatRef = useRef<THREE.Quaternion | null>(null);
+
+  // Green Room (迷你像素紀念館) Wall White Curtain & 1st-Gen Desktop Transition Animator Ref
+  const greenScreenAnimatorRef = useRef<{ update: (delta: number) => void } | null>(null);
 
   // Table Lamp 3D Object Refs for interactive tap & light control
   const lampGroupRef = useRef<THREE.Group | null>(null);
@@ -8457,13 +8465,21 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
           color: 0xaee4ff,
         });
         const capInteriorLedMat = new THREE.MeshStandardMaterial({
-          color: 0xfff6ea,
-          emissive: 0xfff0d6,
-          emissiveIntensity: 0.68,
+          color: 0xffffff,
+          emissive: 0xfff8f0,
+          emissiveIntensity: 0.78,
           roughness: 0.35,
           metalness: 0.0,
         });
         capsuleCeilingLedMatRef.current = capInteriorLedMat;
+        const capBlueStripMat = new THREE.MeshStandardMaterial({
+          color: 0x334155,
+          emissive: 0x000000,
+          emissiveIntensity: 0,
+          roughness: 0.28,
+          metalness: 0.05,
+        });
+        capsuleBlueStripMatRef.current = capBlueStripMat;
         const capWindowMat = new THREE.MeshPhysicalMaterial({
           color: 0xbae6fd,
           emissive: 0x38bdf8,
@@ -8868,40 +8884,16 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
               rot: [number, number, number];
             }[] = [
               {
-                // Left creamy-white marshmallow pillow
-                body: 0xfffdfd,
-                sheen: 0xffffff,
-                trim: 0xdbeafe,
-                w: 0.33,
-                h: 0.175,
-                d: 0.255,
-                phase: 0.2,
-                pos: [-0.22, PAD_TOP_Y + 0.004, 1.24],
-                rot: [0.22, 0.12, -0.04],
-              },
-              {
-                // Center plump baby-blue marshmallow pillow
-                body: 0xe6f3ff,
-                sheen: 0xf8fcff,
+                // Single plump light cyan-blue marshmallow pillow paired with the dakimakura
+                body: 0xdcf4f7,
+                sheen: 0xf4ffff,
                 trim: 0xffffff,
-                w: 0.35,
+                w: 0.36,
                 h: 0.185,
                 d: 0.265,
                 phase: 1.1,
-                pos: [0.06, PAD_TOP_Y + 0.002, 1.19],
-                rot: [0.17, -0.06, 0.03],
-              },
-              {
-                // Right soft pastel-blush marshmallow pillow
-                body: 0xfff0f5,
-                sheen: 0xfffafc,
-                trim: 0xffffff,
-                w: 0.33,
-                h: 0.175,
-                d: 0.255,
-                phase: 2.3,
-                pos: [0.33, PAD_TOP_Y + 0.004, 1.25],
-                rot: [0.24, -0.14, 0.04],
+                pos: [-0.05, PAD_TOP_Y + 0.002, 1.20],
+                rot: [0.18, -0.05, 0.02],
               },
             ];
 
@@ -8919,6 +8911,368 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
               mp.rotation.set(...cfg.rot);
               podGroup.add(mp);
             });
+
+            // Light Cyan-Green Quilted Comforter/Blanket tucked neatly onto the capsule mattress (淺藍綠色棉被)
+            const createCyanGreenQuiltTex = () => {
+              const c = document.createElement('canvas');
+              c.width = 512;
+              c.height = 512;
+              const ctx = c.getContext('2d');
+              if (ctx) {
+                ctx.fillStyle = '#f3fbfa';
+                ctx.fillRect(0, 0, 512, 512);
+
+                // Subtle woven cotton cross-threads
+                let seed = 823;
+                const rand = () => {
+                  seed = (seed * 16807) % 2147483647;
+                  return (seed - 1) / 2147483646;
+                };
+                for (let i = 0; i < 4200; i++) {
+                  const px = rand() * 512;
+                  const py = rand() * 512;
+                  ctx.fillStyle = rand() > 0.5 ? 'rgba(255,255,255,0.22)' : 'rgba(130,198,192,0.12)';
+                  ctx.fillRect(px, py, 2, 1.5);
+                }
+
+                // Soft quilted grid pocket shading & fine dashed stitch lines
+                const step = 64;
+                for (let gx = 0; gx < 512; gx += step) {
+                  for (let gy = 0; gy < 512; gy += step) {
+                    const grad = ctx.createRadialGradient(
+                      gx + step * 0.5,
+                      gy + step * 0.5,
+                      4,
+                      gx + step * 0.5,
+                      gy + step * 0.5,
+                      step * 0.65
+                    );
+                    grad.addColorStop(0, 'rgba(255,255,255,0.16)');
+                    grad.addColorStop(1, 'rgba(120,185,178,0.12)');
+                    ctx.fillStyle = grad;
+                    ctx.fillRect(gx, gy, step, step);
+                  }
+                }
+                ctx.strokeStyle = 'rgba(112, 176, 170, 0.26)';
+                ctx.lineWidth = 1.4;
+                ctx.setLineDash([4, 3]);
+                for (let g = 0; g <= 512; g += step) {
+                  ctx.beginPath();
+                  ctx.moveTo(g, 0);
+                  ctx.lineTo(g, 512);
+                  ctx.stroke();
+                  ctx.beginPath();
+                  ctx.moveTo(0, g);
+                  ctx.lineTo(512, g);
+                  ctx.stroke();
+                }
+                ctx.setLineDash([]);
+              }
+              const t = new THREE.CanvasTexture(c);
+              t.colorSpace = THREE.SRGBColorSpace;
+              t.wrapS = THREE.RepeatWrapping;
+              t.wrapT = THREE.RepeatWrapping;
+              t.repeat.set(3, 5);
+              t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+              extraRoomTexturesToDispose.push(t);
+              return t;
+            };
+            const cyanGreenQuiltTex = createCyanGreenQuiltTex();
+
+            const cyanGreenQuiltMat = new THREE.MeshPhysicalMaterial({
+              map: cyanGreenQuiltTex,
+              color: 0x99ded8,
+              roughness: 0.88,
+              metalness: 0.0,
+              sheen: 0.86,
+              sheenRoughness: 0.72,
+              sheenColor: new THREE.Color(0xe6fffc),
+              envMapIntensity: 0.30,
+            });
+            const cyanGreenQuiltLiningMat = new THREE.MeshPhysicalMaterial({
+              map: plushTex,
+              color: 0xd9f5f2,
+              roughness: 0.90,
+              metalness: 0.0,
+              sheen: 0.78,
+              sheenRoughness: 0.76,
+              sheenColor: new THREE.Color(0xf4fffd),
+              envMapIntensity: 0.26,
+            });
+
+            const cyanGreenQuiltGroup = new THREE.Group();
+
+            // Helper to sculpt an organic, rumpled, bunched-up cloth mound with deep wrinkles and uneven folds
+            const buildRumpledBlanketMound = (
+              rxBase: number,
+              hBase: number,
+              rzBase: number,
+              phaseOffset: number,
+              material: THREE.Material
+            ) => {
+              const geo = new THREE.SphereGeometry(0.5, 60, 40);
+              const pos = geo.attributes.position;
+              for (let i = 0; i < pos.count; i++) {
+                const vx = pos.getX(i);
+                const vy = pos.getY(i);
+                const vz = pos.getZ(i);
+
+                const nx = vx * 2.0; // [-1, 1]
+                const ny = vy * 2.0; // [-1, 1]
+                const nz = vz * 2.0; // [-1, 1]
+                const ang = Math.atan2(nz, nx);
+                const rad = Math.hypot(nx, nz);
+
+                // Irregular messy blanket footprint with asymmetric bunched lobes & trailing corners
+                const edgeWave =
+                  1.0 +
+                  0.17 * Math.sin(ang * 3.0 + phaseOffset) +
+                  0.12 * Math.cos(ang * 5.0 - phaseOffset * 1.4) +
+                  0.07 * Math.sin(ang * 7.0 + phaseOffset * 2.1);
+
+                const x = nx * rxBase * edgeWave;
+                const z = nz * rzBase * edgeWave;
+
+                let y = 0;
+                if (ny >= -0.12) {
+                  const topFactor = Math.max(0, (ny + 0.12) / 1.12);
+                  const baseDome = Math.pow(topFactor, 0.72);
+
+                  // Sweeping diagonal cloth folds + twisted rumpled ridges + sharp pinched tuck valleys
+                  const diagFold1 =
+                    0.26 * Math.sin(nx * 4.6 + nz * 3.4 + phaseOffset) * (1.0 - rad * 0.25);
+                  const diagFold2 =
+                    0.18 * Math.cos(nx * 6.8 - nz * 5.2 + Math.sin(nz * 3.8 + phaseOffset) * 1.2);
+                  const microWrinkle =
+                    0.09 * Math.sin(nx * 11.5 + nz * 9.2 + phaseOffset * 2.3) * Math.min(1, rad + 0.25);
+                  const deepValley1 =
+                    -0.34 * Math.exp(-Math.pow(nx * 1.9 - nz * 1.4 - 0.16 + Math.sin(phaseOffset) * 0.2, 2) * 14.0);
+                  const deepValley2 =
+                    -0.28 * Math.exp(-Math.pow(nx * 1.5 + nz * 2.1 + 0.28, 2) * 16.0);
+                  const centerBunch =
+                    0.22 * Math.exp(-(nx * nx * 2.2 + nz * nz * 1.8));
+
+                  const heightScale = Math.max(
+                    0.14,
+                    baseDome * (0.78 + centerBunch + diagFold1 + diagFold2 + microWrinkle + deepValley1 + deepValley2)
+                  );
+                  y = hBase * heightScale;
+                } else {
+                  // Flatten bottom underside cleanly against mattress with soft rolled overhang lip
+                  const underFactor = Math.max(0, 1.0 + (ny + 0.12) / 0.88);
+                  y = 0.008 * underFactor;
+                }
+
+                pos.setXYZ(i, x, y, z);
+              }
+              pos.needsUpdate = true;
+              geo.computeVertexNormals();
+              geo.computeBoundingBox();
+              const minY = geo.boundingBox ? geo.boundingBox.min.y : 0;
+              geo.translate(0, -minY, 0);
+
+              const mesh = new THREE.Mesh(geo, material);
+              mesh.castShadow = true;
+              mesh.receiveShadow = true;
+              return mesh;
+            };
+
+            // Main crumpled messy blanket mound bunched across the middle-foot of the bed
+            const mainHeapMesh = buildRumpledBlanketMound(0.36, 0.165, 0.54, 0.45, cyanGreenQuiltMat);
+            mainHeapMesh.position.set(-0.02, 0, -0.02);
+            mainHeapMesh.rotation.y = 0.18;
+            cyanGreenQuiltGroup.add(mainHeapMesh);
+
+            // Second twisted bunched fold piled askew on top/back showing a peek of pale-mint lining
+            const upperFoldMesh = buildRumpledBlanketMound(0.27, 0.125, 0.34, 2.35, cyanGreenQuiltLiningMat);
+            upperFoldMesh.position.set(0.08, 0.042, 0.18);
+            upperFoldMesh.rotation.set(0.08, -0.58, -0.10);
+            cyanGreenQuiltGroup.add(upperFoldMesh);
+
+            // Third messy trailing kicked-out corner bunched near the doorway foot
+            const tailFoldMesh = buildRumpledBlanketMound(0.24, 0.095, 0.36, 4.15, cyanGreenQuiltMat);
+            tailFoldMesh.position.set(-0.11, 0.0, -0.44);
+            tailFoldMesh.rotation.set(0.0, -0.46, 0.05);
+            cyanGreenQuiltGroup.add(tailFoldMesh);
+
+            // Pulled closer toward the headboard (+Z) while staying clear of innerShelf on left & dakimakura at headboard
+            cyanGreenQuiltGroup.position.set(0.02, PAD_TOP_Y - 0.002, -0.14);
+            podGroup.add(cyanGreenQuiltGroup);
+
+            // --- VERTICAL DOUBLE-SIDED DAKIMAKURA BODY PILLOW TUCKED INSIDE CAPSULE POD (圖延伸到邊線，再縮小並靠床頭) ---
+            const dakimakuraGroup = new THREE.Group();
+            const DAKI_W = 0.305; // 30.5cm wide
+            const DAKI_H = 0.542; // 54.2cm tall (exact 9:16 = 1152:2048 vertical long body pillow ratio)
+            const DAKI_D = 0.105; // ~10.5cm base depth, puffed cleanly from edge-to-edge
+
+            const dakiFrontTex = textureLoader.load('/assets/daki_front.jpg');
+            dakiFrontTex.colorSpace = THREE.SRGBColorSpace;
+            dakiFrontTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+            // Front image is 852x1200 (0.710 ratio); crop horizontally centered to match 0.50/0.89 (0.5618) with zero distortion
+            const dakiFrontRepeatX = (DAKI_W / DAKI_H) / (852 / 1200);
+            dakiFrontTex.repeat.set(dakiFrontRepeatX, 1);
+            dakiFrontTex.offset.set((1 - dakiFrontRepeatX) / 2, 0);
+            extraRoomTexturesToDispose.push(dakiFrontTex);
+
+            const dakiBackTex = textureLoader.load('/assets/daki_back_new.jpg');
+            dakiBackTex.colorSpace = THREE.SRGBColorSpace;
+            dakiBackTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+            // Back image is 1390x1819 (0.7642 ratio); crop horizontally centered to match 9:16 pillow with zero distortion
+            const dakiBackRepeatX = (DAKI_W / DAKI_H) / (1390 / 1819);
+            dakiBackTex.repeat.set(dakiBackRepeatX, 1);
+            dakiBackTex.offset.set((1 - dakiBackRepeatX) / 2, 0);
+            extraRoomTexturesToDispose.push(dakiBackTex);
+
+            // Sculpt two matching half-shells (Front +Z, Back -Z) whose vertices pinch strictly to z = 0 along the perimeter
+            // so both illustrations wrap edge-to-edge right into the stitched seam piping with zero white border.
+            const buildDakiShellGeo = () => {
+              const geo = new THREE.PlaneGeometry(DAKI_W, DAKI_H, 32, 52);
+              const pos = geo.attributes.position;
+              for (let i = 0; i < pos.count; i++) {
+                let x = pos.getX(i);
+                let y = pos.getY(i);
+                const nx = Math.max(-1, Math.min(1, x / (DAKI_W / 2)));
+                const ny = Math.max(-1, Math.min(1, y / (DAKI_H / 2)));
+
+                const cornerInset = Math.pow(Math.abs(nx), 4.0) * Math.pow(Math.abs(ny), 4.0) * 0.065;
+                x *= 1.0 - cornerInset;
+                y *= 1.0 - cornerInset * 0.45;
+
+                const edgeProfile = Math.pow(
+                  Math.max(0.0, (1.0 - nx * nx) * (1.0 - ny * ny)),
+                  0.42
+                );
+                const centerPlump = 1.0 + 0.14 * (1.0 - nx * nx) * (1.0 - ny * ny);
+                const z = (DAKI_D / 2) * edgeProfile * centerPlump;
+
+                pos.setXYZ(i, x, y, z);
+              }
+              pos.needsUpdate = true;
+              geo.computeVertexNormals();
+              geo.computeBoundingBox();
+              geo.computeBoundingSphere();
+              return geo;
+            };
+
+            const dakiShellGeo = buildDakiShellGeo();
+
+            const dakiSeamFabricMat = new THREE.MeshPhysicalMaterial({
+              color: 0xf4f6fa,
+              roughness: 0.86,
+              metalness: 0.0,
+              sheen: 0.72,
+              sheenRoughness: 0.72,
+              sheenColor: new THREE.Color(0xffffff),
+              envMapIntensity: 0.28,
+            });
+            const dakiFrontMat = new THREE.MeshPhysicalMaterial({
+              map: dakiFrontTex,
+              color: 0xffffff,
+              roughness: 0.84,
+              metalness: 0.0,
+              sheen: 0.48,
+              sheenRoughness: 0.74,
+              sheenColor: new THREE.Color(0xf8fbff),
+              envMapIntensity: 0.26,
+            });
+            const dakiBackMat = new THREE.MeshPhysicalMaterial({
+              map: dakiBackTex,
+              color: 0xffffff,
+              roughness: 0.84,
+              metalness: 0.0,
+              sheen: 0.48,
+              sheenRoughness: 0.74,
+              sheenColor: new THREE.Color(0xfff5f8),
+              envMapIntensity: 0.26,
+            });
+
+            const dakiFrontMesh = new THREE.Mesh(dakiShellGeo, dakiFrontMat);
+            dakiFrontMesh.castShadow = true;
+            dakiFrontMesh.receiveShadow = true;
+            dakimakuraGroup.add(dakiFrontMesh);
+
+            const dakiBackMesh = new THREE.Mesh(dakiShellGeo, dakiBackMat);
+            dakiBackMesh.rotation.y = Math.PI;
+            dakiBackMesh.castShadow = true;
+            dakiBackMesh.receiveShadow = true;
+            dakimakuraGroup.add(dakiBackMesh);
+
+            // Stitched perimeter piping cord tracing the exact deformed pillow seam (X-Y silhouette at Z=0)
+            const seamRingPts: THREE.Vector3[] = [];
+            const SEAM_PTS = 64;
+            for (let s = 0; s < SEAM_PTS; s++) {
+              const t = (s / SEAM_PTS) * Math.PI * 2;
+              const ct = Math.cos(t);
+              const st = Math.sin(t);
+              const maxAxis = Math.max(Math.abs(ct), Math.abs(st), 1e-4);
+              const nx = ct / maxAxis;
+              const ny = st / maxAxis;
+              const cornerInset = Math.pow(Math.abs(nx), 4.0) * Math.pow(Math.abs(ny), 4.0) * 0.065;
+              const px = nx * (DAKI_W / 2) * (1.0 - cornerInset);
+              const py = ny * (DAKI_H / 2) * (1.0 - cornerInset * 0.45);
+              seamRingPts.push(new THREE.Vector3(px, py, 0));
+            }
+            const dakiSeamCurve = new THREE.CatmullRomCurve3(seamRingPts, true);
+            const dakiSeamPiping = new THREE.Mesh(
+              new THREE.TubeGeometry(dakiSeamCurve, 72, 0.0042, 8, true),
+              dakiSeamFabricMat
+            );
+            dakiSeamPiping.castShadow = true;
+            dakimakuraGroup.add(dakiSeamPiping);
+
+            // Invisible tap hitbox covering the dakimakura body pillow
+            const dakiHitbox = new THREE.Mesh(
+              new THREE.BoxGeometry(DAKI_W + 0.08, DAKI_H + 0.08, DAKI_D + 0.08),
+              new THREE.MeshBasicMaterial({ visible: false })
+            );
+            dakiHitbox.name = 'dakimakura_hitbox';
+            dakiHitboxRef.current = dakiHitbox;
+            dakimakuraGroup.add(dakiHitbox);
+
+            // Pose 0: Slightly tilted standing pose leaning cozily against BOTH the headboard (+Z) and right wall (+X)
+            const makeDakiBasisQuat = (axisYVec: THREE.Vector3, frontHintVec: THREE.Vector3) => {
+              const ay = axisYVec.clone().normalize();
+              const ax = new THREE.Vector3().crossVectors(ay, frontHintVec.clone().normalize()).normalize();
+              const az = new THREE.Vector3().crossVectors(ax, ay).normalize();
+              return new THREE.Quaternion().setFromRotationMatrix(
+                new THREE.Matrix4().makeBasis(ax, ay, az)
+              );
+            };
+
+            const pose0Pos = new THREE.Vector3(0.34, 0.47, 1.27);
+            const pose0Quat = makeDakiBasisQuat(
+              new THREE.Vector3(0.20, 0.94, 0.27),
+              new THREE.Vector3(-0.56, 0.22, -0.80)
+            );
+
+            // Pose 1 (Click 1): Fallen sideways onto the bed leaning against the right side wall
+            const pose1Pos = new THREE.Vector3(0.355, 0.315, 1.00);
+            const pose1Quat = makeDakiBasisQuat(
+              new THREE.Vector3(-0.04, 0.14, 0.989),
+              new THREE.Vector3(-0.66, 0.75, -0.05)
+            );
+
+            // Partial hop rotation (~45 deg attempt to turn over without flipping) & full 180 deg back-reveal rotation
+            const dakiHopQuat = pose1Quat
+              .clone()
+              .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -0.78));
+            const dakiFlipQuat = pose1Quat
+              .clone()
+              .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI));
+
+            dakiPose0Ref.current = { pos: pose0Pos, quat: pose0Quat };
+            dakiPose1Ref.current = { pos: pose1Pos, quat: pose1Quat };
+            dakiHopQuatRef.current = dakiHopQuat;
+            dakiFlipQuatRef.current = dakiFlipQuat;
+            dakiGroupRef.current = dakimakuraGroup;
+            dakiClickCountRef.current = 0;
+            dakiHasFlippedOnceRef.current = false;
+            dakiAnimModeRef.current = 'idle_lean';
+            dakiAnimElapsedRef.current = 0;
+
+            dakimakuraGroup.position.copy(pose0Pos);
+            dakimakuraGroup.quaternion.copy(pose0Quat);
+            podGroup.add(dakimakuraGroup);
 
             // Inner white-oak bedside ledge extended all the way to the front door (架子延伸至床尾門前)
             const innerShelf = new THREE.Mesh(
@@ -9181,7 +9535,7 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
             uchiwaFanGroup.rotation.y = Math.PI / 2;
             podGroup.add(uchiwaFanGroup);
 
-            // Ceiling warm-cozy LED strip + brightened capsule lights
+            // Unified Overhead Ceiling Light Panel + Side/Head Blue LED Strips (統整上方白燈 / 藍燈 / 藍色燈條 / 關燈)
             const ceilingLedBar = new THREE.Mesh(
               new THREE.BoxGeometry(0.54, 0.016, 2.24),
               capInteriorLedMat
@@ -9189,87 +9543,38 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
             ceilingLedBar.position.set(0, POD_H - wallT - 0.012, 0.06);
             podGroup.add(ceilingLedBar);
 
-            const interiorPodLightBack = new THREE.PointLight(0xfff2e4, 0.48, 4.2, 1.14);
+            // Perimeter blue LED strips recessed along ceiling sides & headboard edge
+            [-0.46, 0.46].forEach((sx) => {
+              const sideBlueStrip = new THREE.Mesh(
+                new THREE.BoxGeometry(0.022, 0.010, 2.52),
+                capBlueStripMat
+              );
+              sideBlueStrip.position.set(sx, POD_H - wallT - 0.011, 0.04);
+              podGroup.add(sideBlueStrip);
+            });
+            const backBlueStrip = new THREE.Mesh(
+              new THREE.BoxGeometry(0.90, 0.010, 0.022),
+              capBlueStripMat
+            );
+            backBlueStrip.position.set(0, POD_H - wallT - 0.011, 1.29);
+            podGroup.add(backBlueStrip);
+
+            const interiorPodLightBack = new THREE.PointLight(0xfff6eb, 0.48, 4.2, 1.14);
             interiorPodLightBack.position.set(0, POD_H - 0.22, 0.55);
             capsuleMainLightBackRef.current = interiorPodLightBack;
             podGroup.add(interiorPodLightBack);
 
-            const interiorPodLightFront = new THREE.PointLight(0xfff2e4, 0.42, 4.0, 1.16);
+            const interiorPodLightFront = new THREE.PointLight(0xfff6eb, 0.42, 4.0, 1.16);
             interiorPodLightFront.position.set(0, POD_H - 0.22, -0.55);
             capsuleMainLightFrontRef.current = interiorPodLightFront;
             podGroup.add(interiorPodLightFront);
 
-            // Headboard Bedside Light Switch Panel & Dim Light-Blue Reading Lamp (膠囊艙床頭電燈開關＋暗淺藍光閱讀燈)
+            // Headboard Bedside Light Switch Panel moved to Right Side (-X when facing headboard +Z)
             capsuleLightModeRef.current = 0;
             const headWallInnerZ = POD_L / 2 - 0.05; // 1.45m (front face of podBackWall)
 
-            // 1. Dim Light-Blue Reading Lamp mounted on Oak Headboard above right pillow
-            const readingLampGroup = new THREE.Group();
-            readingLampGroup.position.set(0.34, 0.78, headWallInnerZ);
-
-            const lampMountPlate = new THREE.Mesh(
-              new THREE.CylinderGeometry(0.032, 0.034, 0.012, 20),
-              capMetalMat
-            );
-            lampMountPlate.rotation.x = Math.PI / 2;
-            lampMountPlate.position.z = -0.006;
-            readingLampGroup.add(lampMountPlate);
-
-            const lampArmStem = new THREE.Mesh(
-              new THREE.CylinderGeometry(0.009, 0.009, 0.065, 12),
-              capMetalMat
-            );
-            lampArmStem.rotation.x = Math.PI / 2;
-            lampArmStem.position.set(0, 0, -0.038);
-            readingLampGroup.add(lampArmStem);
-
-            const lampHeadPivot = new THREE.Group();
-            lampHeadPivot.position.set(0, -0.008, -0.072);
-            lampHeadPivot.rotation.x = 0.58; // Angled downward & forward over pillows
-
-            const lampHoodShell = new THREE.Mesh(
-              new THREE.CylinderGeometry(0.022, 0.028, 0.062, 20),
-              capDoorMat
-            );
-            lampHoodShell.castShadow = true;
-            lampHeadPivot.add(lampHoodShell);
-
-            const lampTrimCollar = new THREE.Mesh(
-              new THREE.TorusGeometry(0.027, 0.0032, 8, 20),
-              capMetalMat
-            );
-            lampTrimCollar.rotation.x = Math.PI / 2;
-            lampTrimCollar.position.y = -0.031;
-            lampHeadPivot.add(lampTrimCollar);
-
-            const readingLensMat = new THREE.MeshStandardMaterial({
-              color: 0x9ecae8,
-              emissive: 0x7dd3fc,
-              emissiveIntensity: 0,
-              roughness: 0.25,
-              metalness: 0.02,
-            });
-            capsuleReadingLensMatRef.current = readingLensMat;
-
-            const lampLensDisc = new THREE.Mesh(
-              new THREE.CircleGeometry(0.025, 20),
-              readingLensMat
-            );
-            lampLensDisc.rotation.x = Math.PI / 2;
-            lampLensDisc.position.y = -0.0315;
-            lampHeadPivot.add(lampLensDisc);
-
-            readingLampGroup.add(lampHeadPivot);
-            podGroup.add(readingLampGroup);
-
-            const capsuleReadingLight = new THREE.PointLight(0x8bd8ff, 0, 2.5, 1.35);
-            capsuleReadingLight.position.set(0.34, 0.70, headWallInnerZ - 0.14);
-            capsuleReadingLightRef.current = capsuleReadingLight;
-            podGroup.add(capsuleReadingLight);
-
-            // 2. Tactile Bedside Push-Button Switch Panel mounted directly below the reading lamp
             const switchGroup = new THREE.Group();
-            switchGroup.position.set(0.34, 0.55, headWallInnerZ);
+            switchGroup.position.set(-0.34, 0.56, headWallInnerZ);
 
             const switchPlate = new THREE.Mesh(
               new THREE.BoxGeometry(0.088, 0.088, 0.010),
@@ -9310,13 +9615,13 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
             switchLedDot.position.set(0, 0.012, -0.021);
             switchGroup.add(switchLedDot);
 
-            // Invisible generous tap hitbox for easy clicking from inside or outside the capsule
+            // Invisible generous tap hitbox centered on the right-side switch panel
             const switchHitbox = new THREE.Mesh(
-              new THREE.BoxGeometry(0.18, 0.22, 0.12),
+              new THREE.BoxGeometry(0.18, 0.18, 0.12),
               new THREE.MeshBasicMaterial({ visible: false })
             );
             switchHitbox.name = 'capsule_light_switch_hitbox';
-            switchHitbox.position.set(0, 0.06, -0.04);
+            switchHitbox.position.set(0, 0, -0.04);
             capsuleLightSwitchHitboxRef.current = switchHitbox;
             switchGroup.add(switchHitbox);
 
@@ -9734,13 +10039,13 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
         topKraftTape.rotation.z = -0.03;
         monologuePaperGroup.add(topKraftTape);
 
-        // Invisible generous raycast hitbox for clicking the kraft paper
+        // Invisible raycast hitbox sitting strictly on the front surface of the kraft paper
         const monologueHitbox = new THREE.Mesh(
-          new THREE.BoxGeometry(KRAFT_W + 0.10, KRAFT_H + 0.10, 0.14),
+          new THREE.BoxGeometry(KRAFT_W + 0.08, KRAFT_H + 0.08, 0.036),
           new THREE.MeshBasicMaterial({ visible: false })
         );
         monologueHitbox.name = 'monologue_kraft_hitbox';
-        monologueHitbox.position.set(0, 0, 0.03);
+        monologueHitbox.position.set(0, 0, 0.018);
         monologuePaperHitboxRef.current = monologueHitbox;
         monologuePaperGroup.add(monologueHitbox);
 
@@ -10089,15 +10394,19 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
           tapeInsetY?: number;
           tapeW?: number;
           tapeH?: number;
+          uvRepeatX?: number;
+          uvOffsetX?: number;
           uvRepeatY?: number;
           uvOffsetY?: number;
         }) => {
           const pTex = textureLoader.load(opts.texPath);
           pTex.colorSpace = THREE.SRGBColorSpace;
           pTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-          if (opts.uvRepeatY !== undefined) {
-            pTex.repeat.set(1, opts.uvRepeatY);
-            pTex.offset.set(0, opts.uvOffsetY ?? (1 - opts.uvRepeatY) / 2);
+          if (opts.uvRepeatX !== undefined || opts.uvRepeatY !== undefined) {
+            const rx = opts.uvRepeatX ?? 1;
+            const ry = opts.uvRepeatY ?? 1;
+            pTex.repeat.set(rx, ry);
+            pTex.offset.set(opts.uvOffsetX ?? (1 - rx) / 2, opts.uvOffsetY ?? (1 - ry) / 2);
           }
           extraRoomTexturesToDispose.push(pTex);
 
@@ -10177,64 +10486,65 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
           tapeH: 0.016,
         });
 
-        // 2. 眼鏡少女 (A3) — すう的通緝照片下方，靠右對齊
-        const GLASSES_GIRL_W = 0.292;
-        const GLASSES_GIRL_H = 0.427;
-        const GLASSES_GIRL_LEFT = WANTED_RIGHT - GLASSES_GIRL_W; // 1.598
-        createDeskWallPoster({
-          texPath: '/assets/desk_poster_a3_1.png',
-          w: GLASSES_GIRL_W,
-          h: GLASSES_GIRL_H,
-          x: WANTED_RIGHT - GLASSES_GIRL_W / 2,
-          y: WANTED_BOT - POSTER_GAP - GLASSES_GIRL_H / 2,
-          rotZ: 0,
-        });
-
-        // 3. 黑眼鏡 (A4) — すう的通緝照片左邊，靠上對齊
-        const BLACK_GLASSES_W = 0.216;
-        const BLACK_GLASSES_H = 0.288;
-        const BLACK_GLASSES_BOT = WANTED_TOP - BLACK_GLASSES_H; // 2.072
-        createDeskWallPoster({
-          texPath: '/assets/desk_poster_a4_2.jpg',
-          w: BLACK_GLASSES_W,
-          h: BLACK_GLASSES_H,
-          x: WANTED_LEFT - POSTER_GAP - BLACK_GLASSES_W / 2,
-          y: WANTED_TOP - BLACK_GLASSES_H / 2,
-          rotZ: 0,
-        });
-
-        // 4. 原涼海雨傘照片位替換為新海報 (A3: 751x1023) — 黑眼鏡跟通緝すう的夾角
-        const NEW_POSTER_W = 0.303;
-        const NEW_POSTER_H = 0.412;
-        const NEW_POSTER_BOT = BLACK_GLASSES_BOT - POSTER_GAP - NEW_POSTER_H; // 1.616
+        // 2. 黑裂玻璃 (A3: 751x1023) — すう的通緝照片下方，靠右對齊
+        const CRACKED_GLASS_W = 0.303;
+        const CRACKED_GLASS_H = 0.412;
+        const SLOT2_LEFT = WANTED_RIGHT - CRACKED_GLASS_W;
         createDeskWallPoster({
           texPath: '/assets/desk_poster_a3_2.jpg',
-          w: NEW_POSTER_W,
-          h: NEW_POSTER_H,
-          x: WANTED_LEFT - POSTER_GAP - NEW_POSTER_W / 2,
-          y: BLACK_GLASSES_BOT - POSTER_GAP - NEW_POSTER_H / 2,
+          w: CRACKED_GLASS_W,
+          h: CRACKED_GLASS_H,
+          x: WANTED_RIGHT - CRACKED_GLASS_W / 2,
+          y: WANTED_BOT - POSTER_GAP - CRACKED_GLASS_H / 2,
           rotZ: 0,
         });
 
-        // 5. Cos照片 (A4) — 眼鏡少女跟涼海すう的通緝照片的夾角之間
+        // 3. Cos照片 (A4) — すう的通緝照片左邊，靠上對齊
         const COS_W = 0.216;
         const COS_H = 0.288;
-        const COS_LEFT = GLASSES_GIRL_LEFT - POSTER_GAP - COS_W; // 1.338
+        const SLOT3_BOT = WANTED_TOP - COS_H;
         createDeskWallPoster({
           texPath: '/assets/desk_poster_a4_1.jpg',
           w: COS_W,
           h: COS_H,
-          x: GLASSES_GIRL_LEFT - POSTER_GAP - COS_W / 2,
-          y: WANTED_BOT - POSTER_GAP - COS_H / 2,
+          x: WANTED_LEFT - POSTER_GAP - COS_W / 2,
+          y: WANTED_TOP - COS_H / 2,
           rotZ: 0,
         });
 
-        // 6. A3橫海報 (1364x768 16:9 A3 area) — 新替換海報與 Cos 照夾角之間
+        // 4. 白色眼鏡少女 (A3: 1026x1500) — Cos照片跟通緝すう的夾角
+        const WHITE_GLASSES_GIRL_W = 0.292;
+        const WHITE_GLASSES_GIRL_H = 0.427;
+        const WHITE_GLASSES_GIRL_LEFT = WANTED_LEFT - POSTER_GAP - WHITE_GLASSES_GIRL_W;
+        const SLOT4_BOT = SLOT3_BOT - POSTER_GAP - WHITE_GLASSES_GIRL_H;
+        createDeskWallPoster({
+          texPath: '/assets/desk_poster_a3_1.png',
+          w: WHITE_GLASSES_GIRL_W,
+          h: WHITE_GLASSES_GIRL_H,
+          x: WANTED_LEFT - POSTER_GAP - WHITE_GLASSES_GIRL_W / 2,
+          y: SLOT3_BOT - POSTER_GAP - WHITE_GLASSES_GIRL_H / 2,
+          rotZ: 0,
+        });
+
+        // 5. 黑框眼鏡妹 (A4) — 黑裂玻璃跟涼海すう的通緝照片的夾角之間
+        const BLACK_GLASSES_W = 0.216;
+        const BLACK_GLASSES_H = 0.288;
+        const SLOT5_LEFT = SLOT2_LEFT - POSTER_GAP - BLACK_GLASSES_W;
+        createDeskWallPoster({
+          texPath: '/assets/desk_poster_a4_2.jpg',
+          w: BLACK_GLASSES_W,
+          h: BLACK_GLASSES_H,
+          x: SLOT2_LEFT - POSTER_GAP - BLACK_GLASSES_W / 2,
+          y: WANTED_BOT - POSTER_GAP - BLACK_GLASSES_H / 2,
+          rotZ: 0,
+        });
+
+        // 6. A3橫海報 (1364x768 16:9 A3 area) — 白色眼鏡少女與黑框眼鏡妹夾角之間
         const A3_LAND_W = 0.470;
         const A3_LAND_H = 0.265;
-        const A3_LAND_RIGHT = COS_LEFT - POSTER_GAP;
+        const A3_LAND_RIGHT = SLOT5_LEFT - POSTER_GAP;
         const A3_LAND_LEFT = A3_LAND_RIGHT - A3_LAND_W;
-        const A3_LAND_BOT = NEW_POSTER_BOT - POSTER_GAP - A3_LAND_H;
+        const A3_LAND_BOT = SLOT4_BOT - POSTER_GAP - A3_LAND_H;
         createDeskWallPoster({
           texPath: '/assets/desk_poster_a3_land.jpg',
           w: A3_LAND_W,
@@ -10244,32 +10554,30 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
           rotZ: 0,
         });
 
-        // 8 & 9. 4×6小卡 移至 A3橫下方靠右對齊，白底少女插畫 A4直海報隨之一起向右移到小卡左側
-        const A4_VERT_W = 0.169;
-        const A4_VERT_H = 0.368;
-        const A4_VERT_TOP = A3_LAND_BOT - POSTER_GAP;
-        const A4_VERT_BOT = A4_VERT_TOP - A4_VERT_H;
-        const CARD_4X6_W = 0.166;
-        const CARD_4X6_H = 0.093;
-        const CARD_4X6_LEFT = A3_LAND_RIGHT - CARD_4X6_W;
-        const A4_VERT_RIGHT = CARD_4X6_LEFT - POSTER_GAP;
-        const A4_VERT_LEFT = A4_VERT_RIGHT - A4_VERT_W;
-
-        // 7. 小七夕籤 (615x2048 狹長直條) — 移至白底少女插畫的左邊，靠下對齊
+        // 7. 小七夕籤 (615x2048 狹長直條) — 移至 A3橫的上面、白色眼鏡少女的左邊，往下對齊
         const TANZAKU_W = 0.090;
         const TANZAKU_H = 0.300;
         createDeskWallPoster({
           texPath: '/assets/desk_poster_tanzaku.jpg',
           w: TANZAKU_W,
           h: TANZAKU_H,
-          x: A4_VERT_LEFT - POSTER_GAP - TANZAKU_W / 2,
-          y: A4_VERT_BOT + TANZAKU_H / 2,
+          x: WHITE_GLASSES_GIRL_LEFT - POSTER_GAP - TANZAKU_W / 2,
+          y: SLOT4_BOT + TANZAKU_H / 2,
           rotZ: 0,
           tapeInsetX: 0.011,
           tapeInsetY: 0.004,
           tapeW: 0.022,
           tapeH: 0.008,
         });
+
+        // 8 & 9. 4×6小卡 移至 A3橫下方靠右對齊，白底少女插畫 A4直海報隨之一起向右移到小卡左側
+        const A4_VERT_W = 0.169;
+        const A4_VERT_H = 0.368;
+        const A4_VERT_TOP = A3_LAND_BOT - POSTER_GAP;
+        const CARD_4X6_W = 0.166;
+        const CARD_4X6_H = 0.093;
+        const CARD_4X6_LEFT = A3_LAND_RIGHT - CARD_4X6_W;
+        const A4_VERT_RIGHT = CARD_4X6_LEFT - POSTER_GAP;
 
         // 8. A4直白底少女插畫海報 (1080x2348 直幅插畫, A4 area = 0.0622 m^2)
         createDeskWallPoster({
@@ -10299,14 +10607,14 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
           tapeH: 0.009,
         });
 
-        // 10. 應援棒舞台照 (寬度 = 整張4×6小卡 + Cos照的一半寬 = 0.274m，保持標準 A4 1:√2 比例) — 擺在小卡跟 Cos 照片下方
-        const BELOW_A4_W = Number((CARD_4X6_W + COS_W / 2).toFixed(3)); // 0.274m
-        const BELOW_A4_H = Number((BELOW_A4_W * Math.SQRT2).toFixed(3)); // 0.387m
+        // 10. 應援棒舞台照 / 演唱會照片 — 改為標準 A3直 (0.297m × 0.420m，1:√2 比例)
+        const BELOW_A4_W = 0.297;
+        const BELOW_A4_H = 0.420;
         const CARD_BOT = A4_VERT_TOP - CARD_4X6_H;
-        const COS_BOT = WANTED_BOT - POSTER_GAP - COS_H;
-        const COS_RIGHT = GLASSES_GIRL_LEFT - POSTER_GAP;
-        const BELOW_A4_TOP = Math.min(CARD_BOT, COS_BOT) - POSTER_GAP;
-        const BELOW_A4_CENTER_X = (CARD_4X6_LEFT + COS_RIGHT) / 2;
+        const SLOT5_BOT = WANTED_BOT - POSTER_GAP - BLACK_GLASSES_H;
+        const BELOW_A4_TOP = Math.min(CARD_BOT, SLOT5_BOT) - POSTER_GAP;
+        const BELOW_A4_LEFT = A4_VERT_RIGHT + POSTER_GAP;
+        const BELOW_A4_CENTER_X = BELOW_A4_LEFT + BELOW_A4_W / 2;
         const belowUvRepeatY = Math.SQRT2 / (1567 / 1044); // ~0.9422 (zero distortion)
         createDeskWallPoster({
           texPath: '/assets/desk_poster_a4_land_below.jpg',
@@ -10317,6 +10625,23 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
           rotZ: 0,
           uvRepeatY: belowUvRepeatY,
           uvOffsetY: (1 - belowUvRepeatY) / 2,
+        });
+
+        // 11. 綠衣少女照片 (Chara 720x466) — 改為標準 A3橫 (0.420m × 0.297m)，位於黑色碎玻璃與演唱會照片夾角之間，向右對齊
+        const SLOT2_BOT = WANTED_BOT - POSTER_GAP - CRACKED_GLASS_H;
+        const CHARA_W = 0.420;
+        const CHARA_H = 0.297;
+        const CHARA_TOP = SLOT2_BOT - POSTER_GAP;
+        const charaUvRepeatX = Math.SQRT2 / (720 / 466); // ~0.9153 (zero distortion)
+        createDeskWallPoster({
+          texPath: '/assets/desk_poster_chara.jpg',
+          w: CHARA_W,
+          h: CHARA_H,
+          x: WANTED_RIGHT - CHARA_W / 2,
+          y: CHARA_TOP - CHARA_H / 2,
+          rotZ: 0,
+          uvRepeatX: charaUvRepeatX,
+          uvOffsetX: (1 - charaUvRepeatX) / 2,
         });
 
         coloredRoomGroup.add(deskWallPostersGroup);
@@ -10739,6 +11064,580 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
         coloredRoomGroup.add(centerRugGroup);
       }
 
+      // --- 5B-GREEN. MINI PIXEL MEMORIAL HALL (「迷你像素紀念館」) WHITE CURTAIN + 1ST-GEN DESKTOP TRANSITION ---
+      // Placed on cBackWall (Z = +PR_SIZE / 2 = +3.5, facing -Z), directly opposite & parallel to the entrance door wall.
+      if (roomId === 'green') {
+        const CURTAIN_W = 6.56;
+        const CURTAIN_H = 2.72;
+        const CURTAIN_Z = PR_SIZE / 2 - 0.055; // +3.445, cleanly in front of wall & 0.04m baseboard
+        const CURTAIN_Y = 1.50; // spans Y ∈ [0.14, 2.86] inside 3.0m height
+
+        const greenCurtainGroup = new THREE.Group();
+        greenCurtainGroup.position.set(PR_CENTER_X, 0, CURTAIN_Z);
+
+        // Top mounting track rod & wall brackets
+        const rodMat = new THREE.MeshStandardMaterial({
+          color: 0xe8edf2,
+          roughness: 0.34,
+          metalness: 0.65,
+          envMapIntensity: 0.55,
+        });
+        const topRod = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.018, 0.018, CURTAIN_W + 0.18, 16),
+          rodMat
+        );
+        topRod.rotation.z = Math.PI / 2;
+        topRod.position.set(0, CURTAIN_Y + CURTAIN_H / 2 + 0.025, 0);
+        greenCurtainGroup.add(topRod);
+
+        [-CURTAIN_W / 2 - 0.06, -CURTAIN_W / 6, CURTAIN_W / 6, CURTAIN_W / 2 + 0.06].forEach((bx) => {
+          const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.045, 0.06), rodMat);
+          bracket.position.set(bx, CURTAIN_Y + CURTAIN_H / 2 + 0.025, 0.025);
+          greenCurtainGroup.add(bracket);
+        });
+
+        // Subtle woven white cloth pleats framing the outer left & right edges of the white curtain
+        const whitePleatMat = new THREE.MeshStandardMaterial({
+          color: 0xfbfbfb,
+          emissive: 0xffffff,
+          emissiveIntensity: 0.26,
+          roughness: 0.92,
+          metalness: 0.0,
+          envMapIntensity: 0.14,
+        });
+        [-1, 1].forEach((side) => {
+          for (let p = 0; p < 3; p++) {
+            const pleat = new THREE.Mesh(
+              new THREE.CylinderGeometry(0.024, 0.028, CURTAIN_H + 0.02, 12),
+              whitePleatMat
+            );
+            pleat.scale.set(1.0, 1.0, 0.45);
+            pleat.position.set(
+              side * (CURTAIN_W / 2 - 0.032 - p * 0.036),
+              CURTAIN_Y,
+              -0.008 - (p % 2) * 0.004
+            );
+            greenCurtainGroup.add(pleat);
+          }
+        });
+
+        // Top & bottom cloth hems
+        const topHem = new THREE.Mesh(
+          new THREE.BoxGeometry(CURTAIN_W + 0.02, 0.038, 0.018),
+          whitePleatMat
+        );
+        topHem.position.set(0, CURTAIN_Y + CURTAIN_H / 2 - 0.01, -0.004);
+        greenCurtainGroup.add(topHem);
+
+        const bottomHem = new THREE.Mesh(
+          new THREE.BoxGeometry(CURTAIN_W + 0.02, 0.032, 0.016),
+          whitePleatMat
+        );
+        bottomHem.position.set(0, CURTAIN_Y - CURTAIN_H / 2 + 0.01, -0.003);
+        greenCurtainGroup.add(bottomHem);
+
+        // Offscreen Canvas + Live CanvasTexture for the 1st-Gen Desktop Transition Effect
+        const CANVAS_W = 1408;
+        const CANVAS_H = 592;
+        const PAD_X = 24;
+        const PAD_Y = 16;
+        const INNER_W = CANVAS_W - PAD_X * 2; // 1360
+        const INNER_H = CANVAS_H - PAD_Y * 2; // 560
+        const GRID = 20;
+        const COLS = Math.floor(INNER_W / GRID); // 68
+        const ROWS = Math.floor(INNER_H / GRID); // 28
+        const TICK_SEC = 0.2;
+        const DISSOLVE_SEC = 0.1;
+
+        const DESKTOP_COLORS = [
+          '#F08080',
+          '#FFB347',
+          '#FFFF00',
+          '#7CFC00',
+          '#87CEEB',
+          '#D1B3FF',
+          '#FFD1DC',
+          '#4C5E6E',
+        ];
+
+        const DESKTOP_CHARS: Record<string, number[][]> = {
+          'H': [[1,0,1],[1,0,1],[1,1,1],[1,0,1],[1,0,1]],
+          'E': [[1,1,1],[1,0,0],[1,1,0],[1,0,0],[1,1,1]],
+          'L': [[1,0,0],[1,0,0],[1,0,0],[1,0,0],[1,1,1]],
+          'O': [[1,1,1],[1,0,1],[1,0,1],[1,0,1],[1,1,1]],
+          'W': [[1,0,1],[1,0,1],[1,0,1],[1,1,1],[1,0,1]],
+          'R': [[1,1,0],[1,0,1],[1,1,0],[1,0,1],[1,0,1]],
+          'D': [[1,1,0],[1,0,1],[1,0,1],[1,0,1],[1,1,0]],
+          'A': [[0,1,0],[1,0,1],[1,1,1],[1,0,1],[1,0,1]],
+          'Q': [[1,1,1],[1,0,1],[1,0,1],[1,1,1],[0,0,1]],
+          '-': [[0,0,0],[0,0,0],[1,1,1],[0,0,0],[0,0,0]],
+          'P': [[1,1,1],[1,0,1],[1,1,1],[1,0,0],[1,0,0]],
+          'I': [[1,1,1],[0,1,0],[0,1,0],[0,1,0],[1,1,1]],
+          'X': [[1,0,1],[1,0,1],[0,1,0],[1,0,1],[1,0,1]],
+          'K': [[1,0,1],[1,1,0],[1,0,0],[1,1,0],[1,0,1]],
+          'U': [[1,0,1],[1,0,1],[1,0,1],[1,0,1],[1,1,1]],
+          'T': [[1,1,1],[0,1,0],[0,1,0],[0,1,0],[0,1,0]],
+          'S': [[1,1,1],[1,0,0],[1,1,1],[0,0,1],[1,1,1]],
+          'N': [[1,0,1],[1,1,1],[1,1,1],[1,0,1],[1,0,1]],
+          '4': [[1,0,1],[1,0,1],[1,1,1],[0,0,1],[0,0,1]],
+          'V': [[1,0,1],[1,0,1],[1,0,1],[1,0,1],[0,1,0]],
+          '&': [[0,1,0],[1,0,1],[0,1,0],[1,0,1],[1,0,1]],
+          '2': [[1,1,1],[0,0,1],[1,1,1],[1,0,0],[1,1,1]],
+          'G': [[1,1,1],[1,0,0],[1,0,1],[1,0,1],[1,1,1]],
+          ' ': [[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]],
+        };
+
+        const SLOGANS: ReadonlyArray<{ line1: string; line2: string }> = [
+          { line1: 'HELLO WORLD', line2: 'WE ARE Q-PIXEL' },
+          { line1: 'KEEP Q', line2: 'WE ARE Q-PIXEL' },
+          { line1: 'SANKETSU', line2: '4EVER & 2GETHER' },
+          { line1: 'IDOL', line2: 'NI NARETAI' },
+        ];
+
+        interface ScreenBlock {
+          isMsg: boolean;
+          color: string;
+          col: number;
+          row: number;
+          visualRow: number;
+          targetRow?: number;
+        }
+
+        const screenCanvas = document.createElement('canvas');
+        screenCanvas.width = CANVAS_W;
+        screenCanvas.height = CANVAS_H;
+        const sCtx = screenCanvas.getContext('2d');
+
+        const screenTex = new THREE.CanvasTexture(screenCanvas);
+        screenTex.colorSpace = THREE.SRGBColorSpace;
+        screenTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        extraRoomTexturesToDispose.push(screenTex);
+
+        let blocks: ScreenBlock[] = [];
+        let phraseIdx = 0;
+        let phase: 'forming' | 'formed' | 'dissolving' | 'cooldown' = 'forming';
+        let phaseTimer = 0;
+        let tickAcc = 0;
+        let dissolveAcc = 0;
+        let drawAcc = 0;
+
+        const spawnPhraseBlocks = (idx: number) => {
+          const { line1, line2 } = SLOGANS[idx % SLOGANS.length];
+          const buildLine = (text: string, startRow: number) => {
+            const charWidth = 4;
+            const totalW = text.length * charWidth - 1;
+            const startCol = Math.floor((COLS - totalW) / 2);
+            const spawned: ScreenBlock[] = [];
+            text.split('').forEach((ch, charIdx) => {
+              const bitmap = DESKTOP_CHARS[ch] || DESKTOP_CHARS[' '];
+              bitmap.forEach((rowArr, rIdx) => {
+                rowArr.forEach((px, cIdx) => {
+                  if (px === 1) {
+                    const initialRow = -Math.floor(Math.random() * 18) - 6;
+                    spawned.push({
+                      isMsg: true,
+                      color: '#FFFFFF',
+                      col: startCol + charIdx * charWidth + cIdx,
+                      row: initialRow,
+                      visualRow: initialRow,
+                      targetRow: startRow + rIdx,
+                    });
+                  }
+                });
+              });
+            });
+            return spawned;
+          };
+          const l1 = buildLine(line1, Math.floor(ROWS / 2) - 6);
+          const l2 = buildLine(line2, Math.floor(ROWS / 2) + 1);
+          blocks.push(...l1, ...l2);
+        };
+
+        // Pre-seed a few ambient colored blocks and start the first transition phrase
+        for (let r = 2; r < ROWS - 4; r += 3) {
+          const count = 2 + Math.floor(Math.random() * 3);
+          for (let k = 0; k < count; k++) {
+            const c = Math.floor(Math.random() * COLS);
+            blocks.push({
+              isMsg: false,
+              color: DESKTOP_COLORS[Math.floor(Math.random() * DESKTOP_COLORS.length)],
+              col: c,
+              row: r,
+              visualRow: r,
+            });
+          }
+        }
+        spawnPhraseBlocks(0);
+
+        const drawScreenFrame = () => {
+          if (!sCtx) return;
+
+          // White cloth fabric border around the projected transition screen
+          sCtx.fillStyle = '#f8f9fb';
+          sCtx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+          // Subtle vertical cloth texture sheen on the white curtain border
+          for (let x = 0; x < CANVAS_W; x += 6) {
+            sCtx.fillStyle = x % 12 === 0 ? 'rgba(220, 226, 234, 0.28)' : 'rgba(255, 255, 255, 0.45)';
+            sCtx.fillRect(x, 0, 2, CANVAS_H);
+          }
+
+          // Subtle inner recess shadow where the white curtain frames the projection area
+          sCtx.fillStyle = 'rgba(25, 38, 56, 0.16)';
+          sCtx.fillRect(PAD_X - 4, PAD_Y - 4, INNER_W + 8, INNER_H + 8);
+
+          // 1st-gen desktop deep midnight blue backdrop (#001B3D + gray-900 overlay tone)
+          sCtx.save();
+          sCtx.beginPath();
+          sCtx.rect(PAD_X, PAD_Y, INNER_W, INNER_H);
+          sCtx.clip();
+
+          sCtx.fillStyle = '#07172d';
+          sCtx.fillRect(PAD_X, PAD_Y, INNER_W, INNER_H);
+
+          // 1st-gen 24px-style pixel grid lines
+          sCtx.strokeStyle = 'rgba(255, 255, 255, 0.13)';
+          sCtx.lineWidth = 1;
+          sCtx.beginPath();
+          for (let c = 0; c <= COLS; c++) {
+            const gx = PAD_X + c * GRID + 0.5;
+            sCtx.moveTo(gx, PAD_Y);
+            sCtx.lineTo(gx, PAD_Y + INNER_H);
+          }
+          for (let r = 0; r <= ROWS; r++) {
+            const gy = PAD_Y + r * GRID + 0.5;
+            sCtx.moveTo(PAD_X, gy);
+            sCtx.lineTo(PAD_X + INNER_W, gy);
+          }
+          sCtx.stroke();
+
+          // Draw colorful falling blocks behind white message blocks (zIndex 1 vs 3)
+          const blockSize = GRID - 3.5;
+          const drawSingleBlock = (b: ScreenBlock) => {
+            const bx = PAD_X + b.col * GRID + 1.75;
+            const by = PAD_Y + b.visualRow * GRID + 1.75;
+            if (by + blockSize < PAD_Y - 4 || by > PAD_Y + INNER_H + 4) return;
+            sCtx.fillStyle = b.color;
+            sCtx.fillRect(bx, by, blockSize, blockSize);
+            sCtx.strokeStyle = b.isMsg ? 'rgba(255, 255, 255, 0.55)' : 'rgba(255, 255, 255, 0.22)';
+            sCtx.lineWidth = 1;
+            sCtx.strokeRect(bx + 0.5, by + 0.5, blockSize - 1, blockSize - 1);
+          };
+
+          for (let i = 0; i < blocks.length; i++) {
+            if (!blocks[i].isMsg) drawSingleBlock(blocks[i]);
+          }
+          for (let i = 0; i < blocks.length; i++) {
+            if (blocks[i].isMsg) drawSingleBlock(blocks[i]);
+          }
+
+          sCtx.restore();
+          screenTex.needsUpdate = true;
+        };
+
+        drawScreenFrame();
+
+        greenScreenAnimatorRef.current = {
+          update: (delta: number) => {
+            tickAcc += delta;
+            phaseTimer += delta;
+
+            while (tickAcc >= TICK_SEC) {
+              tickAcc -= TICK_SEC;
+
+              // Move blocks down 1 grid step unless resting at targetRow
+              blocks = blocks
+                .map((b) => {
+                  if (b.targetRow !== undefined && b.row >= b.targetRow) {
+                    return b;
+                  }
+                  return { ...b, row: b.row + 1 };
+                })
+                .filter((b) => b.row < ROWS + 1);
+
+              // Spawn new colorful background blocks at row 0 (0.8 chance per tick, 2..7 blocks)
+              if (Math.random() <= 0.8) {
+                const occupiedTop = new Set<number>();
+                for (let i = 0; i < blocks.length; i++) {
+                  if (blocks[i].row <= 1) occupiedTop.add(blocks[i].col);
+                }
+                const available: number[] = [];
+                for (let c = 0; c < COLS; c++) {
+                  if (!occupiedTop.has(c)) available.push(c);
+                }
+                const spawnCount = Math.floor(Math.random() * 6) + 2;
+                for (let k = 0; k < spawnCount && available.length > 0; k++) {
+                  const pick = Math.floor(Math.random() * available.length);
+                  const col = available[pick];
+                  available.splice(pick, 1);
+                  blocks.push({
+                    isMsg: false,
+                    color: DESKTOP_COLORS[Math.floor(Math.random() * DESKTOP_COLORS.length)],
+                    col,
+                    row: 0,
+                    visualRow: -0.5,
+                  });
+                }
+              }
+
+              // State machine transitions matching 1st-gen desktop App.tsx
+              if (phase === 'forming') {
+                let hasMsg = false;
+                let allReached = true;
+                for (let i = 0; i < blocks.length; i++) {
+                  const b = blocks[i];
+                  if (b.isMsg) {
+                    hasMsg = true;
+                    if (b.targetRow === undefined || b.row < b.targetRow) {
+                      allReached = false;
+                      break;
+                    }
+                  }
+                }
+                if (hasMsg && allReached) {
+                  phase = 'formed';
+                  phaseTimer = 0;
+                }
+              } else if (phase === 'dissolving') {
+                let hasWhiteMsg = false;
+                for (let i = 0; i < blocks.length; i++) {
+                  if (blocks[i].isMsg) {
+                    hasWhiteMsg = true;
+                    break;
+                  }
+                }
+                if (!hasWhiteMsg) {
+                  phase = 'cooldown';
+                  phaseTimer = 0;
+                }
+              }
+            }
+
+            if (phase === 'formed' && phaseTimer >= 0.65) {
+              phase = 'dissolving';
+              phaseTimer = 0;
+              dissolveAcc = 0;
+            } else if (phase === 'dissolving') {
+              dissolveAcc += delta;
+              while (dissolveAcc >= DISSOLVE_SEC) {
+                dissolveAcc -= DISSOLVE_SEC;
+                const staticIndices: number[] = [];
+                for (let i = 0; i < blocks.length; i++) {
+                  const b = blocks[i];
+                  if (b.targetRow !== undefined && b.row >= b.targetRow) {
+                    staticIndices.push(i);
+                  }
+                }
+                if (staticIndices.length > 0) {
+                  const dropCount = Math.floor(Math.random() * 5) + 1;
+                  for (let k = 0; k < dropCount && staticIndices.length > 0; k++) {
+                    const pickIdx = Math.floor(Math.random() * staticIndices.length);
+                    const blockIdx = staticIndices[pickIdx];
+                    staticIndices.splice(pickIdx, 1);
+                    blocks[blockIdx].targetRow = undefined;
+                  }
+                }
+              }
+            } else if (phase === 'cooldown' && phaseTimer >= 0.75) {
+              phraseIdx = (phraseIdx + 1) % SLOGANS.length;
+              spawnPhraseBlocks(phraseIdx);
+              phase = 'forming';
+              phaseTimer = 0;
+            }
+
+            // Smooth spring-like interpolation of each block's visualRow toward row
+            for (let i = 0; i < blocks.length; i++) {
+              blocks[i].visualRow = THREE.MathUtils.damp(blocks[i].visualRow, blocks[i].row, 18, delta);
+            }
+
+            // Redraw & upload GPU texture cleanly at ~30fps while inside green room
+            drawAcc += delta;
+            if (drawAcc >= 1 / 30) {
+              drawAcc = 0;
+              drawScreenFrame();
+            }
+          },
+        };
+
+        const screenMesh = new THREE.Mesh(
+          new THREE.PlaneGeometry(CURTAIN_W, CURTAIN_H),
+          new THREE.MeshStandardMaterial({
+            map: screenTex,
+            emissive: 0xffffff,
+            emissiveMap: screenTex,
+            emissiveIntensity: 0.80,
+            color: 0xffffff,
+            roughness: 0.90,
+            metalness: 0.0,
+            envMapIntensity: 0.12,
+          })
+        );
+        screenMesh.position.set(0, CURTAIN_Y, 0);
+        screenMesh.rotation.y = Math.PI; // face -Z into the room toward the entrance door
+        screenMesh.receiveShadow = true;
+        greenCurtainGroup.add(screenMesh);
+
+        coloredRoomGroup.add(greenCurtainGroup);
+
+        // Side-wall six-tier display cabinets matching the 1F Lobby cabinet design
+        const buildGreenSixTierCabinet = (opts: {
+          width: number;
+          bodyMat: THREE.Material;
+          trimMat: THREE.Material;
+          darkMat: THREE.Material;
+          backMat: THREE.Material;
+        }) => {
+          const cab = new THREE.Group();
+          const W = opts.width;
+          const D = CAB_D;
+          const H = CAB_H;
+          const P_H = PLINTH_H;
+          const C_H = CROWN_H;
+          const S_T = SIDE_THICK;
+          const SH_T = SHELF_THICK;
+
+          const plinthCore = new THREE.Mesh(
+            new THREE.BoxGeometry(W - 0.03, P_H, D - 0.03),
+            opts.darkMat
+          );
+          plinthCore.position.set(0, P_H / 2, -0.01);
+          plinthCore.castShadow = true;
+          plinthCore.receiveShadow = true;
+          cab.add(plinthCore);
+
+          const kickplate = new THREE.Mesh(
+            new THREE.BoxGeometry(W + 0.01, P_H * 0.85, 0.024),
+            opts.trimMat
+          );
+          kickplate.position.set(0, (P_H * 0.85) / 2, D / 2 - 0.008);
+          cab.add(kickplate);
+
+          const bodyHeight = H - P_H - C_H;
+          const sideGeo = new THREE.BoxGeometry(S_T, bodyHeight, D);
+          const stileGeo = new THREE.BoxGeometry(0.044, bodyHeight, 0.014);
+
+          [-1, 1].forEach((side) => {
+            const sx = side * (W / 2 - S_T / 2);
+            const sidePanel = new THREE.Mesh(sideGeo, opts.bodyMat);
+            sidePanel.position.set(sx, P_H + bodyHeight / 2, 0);
+            sidePanel.castShadow = true;
+            sidePanel.receiveShadow = true;
+            cab.add(sidePanel);
+
+            const frontStile = new THREE.Mesh(stileGeo, opts.darkMat);
+            frontStile.position.set(sx, P_H + bodyHeight / 2, D / 2 + 0.005);
+            frontStile.castShadow = true;
+            cab.add(frontStile);
+          });
+
+          const cabBack = new THREE.Mesh(
+            new THREE.BoxGeometry(W - S_T * 2 + 0.01, bodyHeight, 0.018),
+            opts.backMat
+          );
+          cabBack.position.set(0, P_H + bodyHeight / 2, -D / 2 + 0.01);
+          cabBack.receiveShadow = true;
+          cab.add(cabBack);
+
+          const innerSpanW = W - S_T * 2;
+          const shelfGeo = new THREE.BoxGeometry(innerSpanW, SH_T, D - 0.02);
+          const shelfLipGeo = new THREE.BoxGeometry(innerSpanW, SH_T + 0.004, 0.014);
+          const tierPitch = (bodyHeight - SH_T) / 6;
+
+          for (let i = 0; i <= 6; i++) {
+            const sy = P_H + SH_T / 2 + i * tierPitch;
+            const shelf = new THREE.Mesh(shelfGeo, opts.bodyMat);
+            shelf.position.set(0, sy, 0.004);
+            shelf.castShadow = true;
+            shelf.receiveShadow = true;
+            cab.add(shelf);
+
+            const shelfLip = new THREE.Mesh(shelfLipGeo, opts.darkMat);
+            shelfLip.position.set(0, sy, D / 2 - 0.003);
+            cab.add(shelfLip);
+          }
+
+          const lowerCrown = new THREE.Mesh(
+            new THREE.BoxGeometry(W + 0.028, C_H * 0.45, D + 0.022),
+            opts.darkMat
+          );
+          lowerCrown.position.set(0, H - C_H + (C_H * 0.45) / 2, 0.008);
+          lowerCrown.castShadow = true;
+          cab.add(lowerCrown);
+
+          const upperCrown = new THREE.Mesh(
+            new THREE.BoxGeometry(W + 0.06, C_H * 0.55, D + 0.044),
+            opts.trimMat
+          );
+          upperCrown.position.set(0, H - (C_H * 0.55) / 2, 0.014);
+          upperCrown.castShadow = true;
+          cab.add(upperCrown);
+
+          return cab;
+        };
+
+        // Left and Right Wall cabinets: One 2.3m, one 2.0m, and one 1.5m on both sides.
+        const sideCabConfigs = [
+          { width: 2.3, z: -2.10 },
+          { width: 2.0, z: 0.11 },
+          { width: 1.5, z: 1.92 },
+        ];
+
+        // Left Wall (X = -5.0, facing +X): 3 wooden cabinets matching 1F Lobby wood style
+        sideCabConfigs.forEach((cfg) => {
+          const leftCab = buildGreenSixTierCabinet({
+            width: cfg.width,
+            bodyMat: tableMat,
+            trimMat: tableDarkWoodMat,
+            darkMat: cabDarkMat,
+            backMat: cabBackMat,
+          });
+          leftCab.position.set(-5.0 + 0.22, 0, cfg.z);
+          leftCab.rotation.y = Math.PI / 2;
+          coloredRoomGroup.add(leftCab);
+        });
+
+        const leftCabLight = new THREE.PointLight(0xfff3e2, 0.45, 6.5, 1.2);
+        leftCabLight.position.set(-3.75, 2.30, 0.0);
+        coloredRoomGroup.add(leftCabLight);
+
+        // Right Wall (X = +2.0, facing -X): 3 cabinets matching 1F Lobby design in matte black
+        const blackCabBodyMat = new THREE.MeshStandardMaterial({
+          color: 0x18191d,
+          roughness: 0.48,
+          metalness: 0.08,
+          envMapIntensity: 0.36,
+        });
+        const blackCabTrimMat = new THREE.MeshStandardMaterial({
+          color: 0x101114,
+          roughness: 0.42,
+          metalness: 0.10,
+          envMapIntensity: 0.40,
+        });
+        const blackCabBackMat = new THREE.MeshStandardMaterial({
+          color: 0x090a0c,
+          roughness: 0.68,
+          metalness: 0.04,
+          envMapIntensity: 0.22,
+        });
+
+        sideCabConfigs.forEach((cfg) => {
+          const rightCab = buildGreenSixTierCabinet({
+            width: cfg.width,
+            bodyMat: blackCabBodyMat,
+            trimMat: blackCabTrimMat,
+            darkMat: blackCabTrimMat,
+            backMat: blackCabBackMat,
+          });
+          rightCab.position.set(2.0 - 0.22, 0, cfg.z);
+          rightCab.rotation.y = -Math.PI / 2;
+          coloredRoomGroup.add(rightCab);
+        });
+
+        const rightCabLight = new THREE.PointLight(0xffeedb, 0.45, 6.5, 1.2);
+        rightCabLight.position.set(0.75, 2.30, 0.0);
+        coloredRoomGroup.add(rightCabLight);
+      }
+
       scene.add(coloredRoomGroup);
     };
 
@@ -10754,8 +11653,7 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
 
     const buildFoyerRoom = (
       roomId: 'cyan' | 'cyan_b1',
-      farDoorState: ExtraRoomDoorState,
-      floorPlaqueTex: THREE.Texture
+      farDoorState: ExtraRoomDoorState
     ) => {
       const foyerState = extraRoomsRef.current[roomId];
       const foyerGroup = new THREE.Group();
@@ -10971,8 +11869,8 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
       scene.add(foyerGroup);
     };
 
-    buildFoyerRoom('cyan', cyanFarDoorRef.current, door2FEngravingTex);
-    buildFoyerRoom('cyan_b1', cyanB1FarDoorRef.current, doorB1EngravingTex);
+    buildFoyerRoom('cyan', cyanFarDoorRef.current);
+    buildFoyerRoom('cyan_b1', cyanB1FarDoorRef.current);
 
     // --- 5D. TWO 10x7m EMPTY LOBBY-LOGIC 2F HALLS (寶藍色大廳 & 淺棕色大廳) ---
     // Exact 1F Lobby dimensions (10m x 7m x 3m), warm 1F lighting, T-shape seated look,
@@ -11263,11 +12161,12 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
     const PINK_DESK_VIEW_POS = new THREE.Vector3(0.76, 1.30, -2.18);
     const PINK_CAPSULE_VIEW_POS = new THREE.Vector3(-4.36, 1.78, 2.95);
     const PINK_BOARD_VIEW_POS = new THREE.Vector3(-1.72, 1.28, 1.96);
+    const PINK_SHOWCASE_VIEW_POS = new THREE.Vector3(-0.44, 1.15, 0.72);
 
     const renderLoop = () => {
       const delta = Math.min(clock.getDelta(), 0.1);
 
-      // Smoothly move camera between tea table, 6-tier cabinet, doors, desk, capsule pod, corkboard, and center of colored rooms
+      // Smoothly move camera between tea table, 6-tier cabinet, doors, desk, capsule pod, corkboard, showcase cabinets, and center of colored rooms
       const targetPos =
         viewLocationRef.current === 'cabinet'
           ? CABINET_VIEW_POS
@@ -11283,7 +12182,9 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
                     ? PINK_CAPSULE_VIEW_POS
                     : viewLocationRef.current === 'board'
                       ? PINK_BOARD_VIEW_POS
-                      : TABLE_VIEW_POS;
+                      : viewLocationRef.current === 'showcase'
+                        ? PINK_SHOWCASE_VIEW_POS
+                        : TABLE_VIEW_POS;
       playerPosRef.current.x = THREE.MathUtils.damp(playerPosRef.current.x, targetPos.x, 4.6, delta);
       playerPosRef.current.y = THREE.MathUtils.damp(playerPosRef.current.y, targetPos.y, 4.6, delta);
       playerPosRef.current.z = THREE.MathUtils.damp(playerPosRef.current.z, targetPos.z, 4.6, delta);
@@ -11336,6 +12237,84 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
         beybladeLid1PivotRef.current.rotation.x = beybladeLid1AngleRef.current;
       }
 
+      // Dakimakura 7-click interactive animation inside Pink Room Upper Capsule Pod
+      if (
+        dakiGroupRef.current &&
+        dakiPose0Ref.current &&
+        dakiPose1Ref.current &&
+        dakiHopQuatRef.current &&
+        dakiFlipQuatRef.current
+      ) {
+        const mode = dakiAnimModeRef.current;
+        const p0 = dakiPose0Ref.current;
+        const p1 = dakiPose1Ref.current;
+        if (mode === 'falling') {
+          dakiAnimElapsedRef.current += delta;
+          const dur = 0.42;
+          const t = Math.min(1, dakiAnimElapsedRef.current / dur);
+          const ease = 1 - Math.pow(1 - t, 2.4);
+          const softBounce = Math.sin(t * Math.PI) * 0.028;
+          dakiGroupRef.current.position.lerpVectors(p0.pos, p1.pos, ease);
+          dakiGroupRef.current.position.y += softBounce;
+          dakiGroupRef.current.quaternion.copy(p0.quat).slerp(p1.quat, ease);
+          if (t >= 1) {
+            dakiGroupRef.current.position.copy(p1.pos);
+            dakiGroupRef.current.quaternion.copy(p1.quat);
+            dakiAnimModeRef.current = 'idle_fallen';
+          }
+        } else if (mode === 'hop') {
+          dakiAnimElapsedRef.current += delta;
+          const dur = 0.46;
+          const t = Math.min(1, dakiAnimElapsedRef.current / dur);
+          const lift = Math.sin(t * Math.PI);
+          dakiGroupRef.current.position.copy(p1.pos);
+          dakiGroupRef.current.position.x -= 0.025 * lift;
+          dakiGroupRef.current.position.y += 0.075 * lift;
+          dakiGroupRef.current.quaternion.copy(p1.quat).slerp(dakiHopQuatRef.current, Math.pow(lift, 0.85));
+          if (t >= 1) {
+            dakiGroupRef.current.position.copy(p1.pos);
+            dakiGroupRef.current.quaternion.copy(p1.quat);
+            dakiAnimModeRef.current = 'idle_fallen';
+          }
+        } else if (mode === 'flip') {
+          dakiAnimElapsedRef.current += delta;
+          const el = dakiAnimElapsedRef.current;
+          const flipUpDur = 0.28;
+          const holdDur = 1.00;
+          const flipBackDur = 0.28;
+          const totalDur = flipUpDur + holdDur + flipBackDur;
+          if (el < flipUpDur) {
+            const u = el / flipUpDur;
+            const arc = Math.sin(u * Math.PI);
+            const ease = 1 - Math.pow(1 - u, 2);
+            dakiGroupRef.current.position.copy(p1.pos);
+            dakiGroupRef.current.position.x -= 0.085 * arc;
+            dakiGroupRef.current.position.y += 0.165 * arc;
+            dakiGroupRef.current.quaternion.copy(p1.quat).slerp(dakiFlipQuatRef.current, ease);
+          } else if (el < flipUpDur + holdDur) {
+            const settleT = el - flipUpDur;
+            const settleY = Math.max(0, Math.exp(-settleT * 14) * Math.sin(settleT * 28) * 0.012);
+            dakiGroupRef.current.position.copy(p1.pos);
+            dakiGroupRef.current.position.y += settleY;
+            dakiGroupRef.current.quaternion.copy(dakiFlipQuatRef.current);
+          } else if (el < totalDur) {
+            const u = (el - flipUpDur - holdDur) / flipBackDur;
+            const arc = Math.sin(u * Math.PI);
+            const ease = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
+            dakiGroupRef.current.position.lerpVectors(p1.pos, p0.pos, ease);
+            dakiGroupRef.current.position.x -= 0.06 * arc;
+            dakiGroupRef.current.position.y += 0.14 * arc;
+            dakiGroupRef.current.quaternion.copy(dakiFlipQuatRef.current).slerp(p0.quat, ease);
+          } else {
+            dakiGroupRef.current.position.copy(p0.pos);
+            dakiGroupRef.current.quaternion.copy(p0.quat);
+            dakiAnimModeRef.current = 'idle_lean';
+            dakiClickCountRef.current = 0;
+            dakiHasFlippedOnceRef.current = true;
+          }
+        }
+      }
+
       // Brief hinge rattle when clicking a locked door (pointer color doesn't match a room)
       if (doorRattleTimerRef.current > 0) {
         doorRattleTimerRef.current = Math.max(0, doorRattleTimerRef.current - delta);
@@ -11355,6 +12334,10 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
         });
         if (cyanFarDoorRef.current.doorLeafPivot) cyanFarDoorRef.current.doorLeafPivot.rotation.y = 0;
         if (cyanB1FarDoorRef.current.doorLeafPivot) cyanB1FarDoorRef.current.doorLeafPivot.rotation.y = 0;
+      }
+
+      if (activeRoomRef.current === 'green' && greenScreenAnimatorRef.current) {
+        greenScreenAnimatorRef.current.update(delta);
       }
 
       renderer.render(scene, camera);
@@ -11398,6 +12381,7 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
       window.removeEventListener('keydown', handleKeyDown);
       if (portalSwapTimeoutRef.current !== null) window.clearTimeout(portalSwapTimeoutRef.current);
       if (portalFadeEndTimeoutRef.current !== null) window.clearTimeout(portalFadeEndTimeoutRef.current);
+      if (dakiSubtitleTimerRef.current !== null) window.clearTimeout(dakiSubtitleTimerRef.current);
 
       scene.traverse((obj) => {
         if (obj instanceof THREE.Mesh) {
@@ -11416,6 +12400,7 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
       ceilingTexture.dispose();
       enterPortalRoomRef.current = null;
       getCarvedPlaqueTextureRef.current = null;
+      greenScreenAnimatorRef.current = null;
       doorEngravingTex.dispose();
       door2FEngravingTex.dispose();
       doorB1EngravingTex.dispose();
@@ -11617,6 +12602,9 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
         activeRoomRef.current = targetRoom;
         setActiveRoom(targetRoom);
         setIsPinkNavOpen(false);
+        if (targetRoom !== 'pink') {
+          setDakiSubtitle(null);
+        }
 
         if (lobbyRoomGroupRef.current) lobbyRoomGroupRef.current.visible = isLobby;
         (['purple', 'green', 'gold', 'pink', 'cyan', 'cyan_b1', 'royalblue', 'brown'] as const).forEach((roomId) => {
@@ -11831,21 +12819,45 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
         }
       }
 
-      // 4. Pink Room Corkboard Kraft Paper tap (阿璃的獨白)
-      if (currentRoom === 'pink' && monologuePaperHitboxRef.current) {
+      // 4. Pink Room Corkboard Kraft Paper tap (阿璃的獨白) — disabled inside capsule & blocked by solid wall occlusion
+      if (
+        currentRoom === 'pink' &&
+        viewLocationRef.current !== 'capsule' &&
+        monologuePaperHitboxRef.current
+      ) {
         const monoHits = raycasterRef.current.intersectObject(monologuePaperHitboxRef.current, false);
         if (monoHits.length > 0) {
-          isMonologueOpenRef.current = true;
-          setIsMonologueOpen(true);
-          if (typeof navigator !== 'undefined' && navigator.vibrate) {
-            try { navigator.vibrate(15); } catch {}
+          let occludedByWall = false;
+          if (sceneRef.current) {
+            const sceneHits = raycasterRef.current.intersectObjects(sceneRef.current.children, true);
+            const firstSolidHit = sceneHits.find((hit) => {
+              if (!hit.object.visible || hit.object.name.includes('hitbox')) return false;
+              const mat = (hit.object as THREE.Mesh).material;
+              if (!mat) return false;
+              if (Array.isArray(mat)) return mat.some((m) => m.visible !== false);
+              return mat.visible !== false;
+            });
+            if (firstSolidHit && firstSolidHit.distance < monoHits[0].distance - 0.12) {
+              occludedByWall = true;
+            }
           }
-          return true;
+          if (!occludedByWall) {
+            isMonologueOpenRef.current = true;
+            setIsMonologueOpen(true);
+            if (typeof navigator !== 'undefined' && navigator.vibrate) {
+              try { navigator.vibrate(15); } catch {}
+            }
+            return true;
+          }
         }
       }
 
-      // 4b. Pink Room Desk Beyblade X Box tap (點擊打開/關閉第一個格子)
-      if (currentRoom === 'pink' && beybladeBoxHitboxRef.current) {
+      // 4b. Pink Room Desk Beyblade X Box tap (點擊打開/關閉第一個格子) — disabled inside capsule
+      if (
+        currentRoom === 'pink' &&
+        viewLocationRef.current !== 'capsule' &&
+        beybladeBoxHitboxRef.current
+      ) {
         const beyHits = raycasterRef.current.intersectObject(beybladeBoxHitboxRef.current, false);
         if (beyHits.length > 0) {
           beybladeLid1OpenRef.current = !beybladeLid1OpenRef.current;
@@ -11856,50 +12868,83 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
         }
       }
 
-      // 4c. Pink Room Upper Capsule Bedside Light Switch tap (膠囊艙床頭開關切換：頂燈 / 暗淺藍閱讀燈 / 雙燈 / 全關)
+      // 4c. Pink Room Upper Capsule Bedside Light Switch tap (初始白色 → 藍色 → 藍色燈條 → 關燈)
       if (currentRoom === 'pink' && capsuleLightSwitchHitboxRef.current) {
         const swHits = raycasterRef.current.intersectObject(capsuleLightSwitchHitboxRef.current, false);
         if (swHits.length > 0) {
           const nextMode = (capsuleLightModeRef.current + 1) % 4;
           capsuleLightModeRef.current = nextMode;
-          const mainOn = nextMode === 0 || nextMode === 2;
-          const readingOn = nextMode === 1 || nextMode === 2;
+
+          const isWhite = nextMode === 0;
+          const isBlue = nextMode === 1;
+          const isBlueStrip = nextMode === 2;
 
           if (capsuleMainLightBackRef.current) {
-            capsuleMainLightBackRef.current.intensity = mainOn ? 0.48 : 0;
+            capsuleMainLightBackRef.current.color.setHex(
+              isWhite ? 0xfff6eb : isBlue ? 0x8bd8ff : 0x38bdf8
+            );
+            capsuleMainLightBackRef.current.intensity = isWhite
+              ? 0.48
+              : isBlue
+                ? 0.42
+                : isBlueStrip
+                  ? 0.24
+                  : 0;
           }
           if (capsuleMainLightFrontRef.current) {
-            capsuleMainLightFrontRef.current.intensity = mainOn ? 0.42 : 0;
+            capsuleMainLightFrontRef.current.color.setHex(
+              isWhite ? 0xfff6eb : isBlue ? 0x8bd8ff : 0x38bdf8
+            );
+            capsuleMainLightFrontRef.current.intensity = isWhite
+              ? 0.42
+              : isBlue
+                ? 0.36
+                : isBlueStrip
+                  ? 0.20
+                  : 0;
           }
           if (capsuleCeilingLedMatRef.current) {
-            capsuleCeilingLedMatRef.current.color.setHex(mainOn ? 0xfff6ea : 0x475569);
-            capsuleCeilingLedMatRef.current.emissive.setHex(mainOn ? 0xfff0d6 : 0x000000);
-            capsuleCeilingLedMatRef.current.emissiveIntensity = mainOn ? 0.68 : 0;
+            if (isWhite) {
+              capsuleCeilingLedMatRef.current.color.setHex(0xffffff);
+              capsuleCeilingLedMatRef.current.emissive.setHex(0xfff8f0);
+              capsuleCeilingLedMatRef.current.emissiveIntensity = 0.78;
+            } else if (isBlue) {
+              capsuleCeilingLedMatRef.current.color.setHex(0xdbeafe);
+              capsuleCeilingLedMatRef.current.emissive.setHex(0x7dd3fc);
+              capsuleCeilingLedMatRef.current.emissiveIntensity = 0.72;
+            } else {
+              capsuleCeilingLedMatRef.current.color.setHex(0x475569);
+              capsuleCeilingLedMatRef.current.emissive.setHex(0x000000);
+              capsuleCeilingLedMatRef.current.emissiveIntensity = 0;
+            }
           }
-          if (capsuleReadingLightRef.current) {
-            capsuleReadingLightRef.current.intensity = readingOn ? 0.44 : 0;
-          }
-          if (capsuleReadingLensMatRef.current) {
-            capsuleReadingLensMatRef.current.color.setHex(readingOn ? 0xdbeafe : 0x9ecae8);
-            capsuleReadingLensMatRef.current.emissive.setHex(0x7dd3fc);
-            capsuleReadingLensMatRef.current.emissiveIntensity = readingOn ? 0.90 : 0;
+          if (capsuleBlueStripMatRef.current) {
+            if (isBlueStrip) {
+              capsuleBlueStripMatRef.current.color.setHex(0x7dd3fc);
+              capsuleBlueStripMatRef.current.emissive.setHex(0x38bdf8);
+              capsuleBlueStripMatRef.current.emissiveIntensity = 1.15;
+            } else {
+              capsuleBlueStripMatRef.current.color.setHex(0x334155);
+              capsuleBlueStripMatRef.current.emissive.setHex(0x000000);
+              capsuleBlueStripMatRef.current.emissiveIntensity = 0;
+            }
           }
           if (capsuleSwitchBtnRef.current) {
             capsuleSwitchBtnRef.current.position.z = nextMode % 2 === 1 ? -0.014 : -0.016;
             capsuleSwitchBtnRef.current.rotation.x = nextMode % 2 === 1 ? 0.08 : -0.04;
           }
           if (capsuleSwitchLedMatRef.current) {
-            if (nextMode === 0) {
+            if (isWhite) {
               capsuleSwitchLedMatRef.current.color.setHex(0xfef3c7);
               capsuleSwitchLedMatRef.current.emissive.setHex(0xfde68a);
               capsuleSwitchLedMatRef.current.emissiveIntensity = 0.75;
-            } else if (nextMode === 1) {
+            } else if (isBlue) {
               capsuleSwitchLedMatRef.current.color.setHex(0xbae6fd);
               capsuleSwitchLedMatRef.current.emissive.setHex(0x38bdf8);
               capsuleSwitchLedMatRef.current.emissiveIntensity = 0.85;
-            } else if (nextMode === 2) {
-              capsuleSwitchLedMatRef.current.color.setHex(0xe0f2fe);
-              capsuleSwitchLedMatRef.current.emissive.setHex(0x7dd3fc);
+            } else if (isBlueStrip) {
+              capsuleSwitchLedMatRef.current.color.setHex(0x7dd3fc);
+              capsuleSwitchLedMatRef.current.emissive.setHex(0x0ea5e9);
               capsuleSwitchLedMatRef.current.emissiveIntensity = 0.95;
             } else {
               capsuleSwitchLedMatRef.current.color.setHex(0x64748b);
@@ -11911,6 +12956,75 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
             try { navigator.vibrate(14); } catch {}
           }
           return true;
+        }
+      }
+
+      // 4d. Pink Room Upper Capsule Dakimakura tap (7-stage interactive tip/hop/flip sequence + bottom subtitle)
+      if (currentRoom === 'pink' && dakiHitboxRef.current) {
+        const dakiHits = raycasterRef.current.intersectObject(dakiHitboxRef.current, false);
+        if (dakiHits.length > 0) {
+          let occludedByWall = false;
+          if (sceneRef.current) {
+            const sceneHits = raycasterRef.current.intersectObjects(sceneRef.current.children, true);
+            const firstSolidHit = sceneHits.find((hit) => {
+              if (!hit.object.visible || hit.object.name.includes('hitbox')) return false;
+              let cur: THREE.Object3D | null = hit.object;
+              while (cur) {
+                if (cur === dakiGroupRef.current) return false;
+                cur = cur.parent;
+              }
+              const mat = (hit.object as THREE.Mesh).material;
+              if (!mat) return false;
+              if (Array.isArray(mat)) return mat.some((m) => m.visible !== false);
+              return mat.visible !== false;
+            });
+            if (firstSolidHit && firstSolidHit.distance < dakiHits[0].distance - 0.14) {
+              occludedByWall = true;
+            }
+          }
+
+          if (!occludedByWall) {
+            const activeMode = dakiAnimModeRef.current;
+            if (activeMode === 'falling' || activeMode === 'hop' || activeMode === 'flip') {
+              return true;
+            }
+            const nextClick = dakiClickCountRef.current + 1;
+            dakiClickCountRef.current = nextClick;
+
+            let msg = '';
+            if (nextClick === 1) {
+              dakiAnimModeRef.current = 'falling';
+              dakiAnimElapsedRef.current = 0;
+              msg = dakiHasFlippedOnceRef.current ? '屁勒' : '欸？倒了？';
+            } else if (nextClick === 2 || nextClick === 4 || nextClick === 6) {
+              msg = '.....？';
+            } else if (nextClick === 3) {
+              dakiAnimModeRef.current = 'hop';
+              dakiAnimElapsedRef.current = 0;
+              msg = '還滿想看背面是什麼圖的其實';
+            } else if (nextClick === 5) {
+              dakiAnimModeRef.current = 'hop';
+              dakiAnimElapsedRef.current = 0;
+              msg = '欸？黏住了嗎？不可能吧';
+            } else if (nextClick >= 7) {
+              dakiAnimModeRef.current = 'flip';
+              dakiAnimElapsedRef.current = 0;
+              msg = '欸？';
+            }
+
+            if (dakiSubtitleTimerRef.current !== null) {
+              window.clearTimeout(dakiSubtitleTimerRef.current);
+            }
+            setDakiSubtitle(msg);
+            dakiSubtitleTimerRef.current = window.setTimeout(() => {
+              setDakiSubtitle(null);
+            }, 4000);
+
+            if (typeof navigator !== 'undefined' && navigator.vibrate) {
+              try { navigator.vibrate(nextClick === 7 ? [18, 30, 18] : 14); } catch {}
+            }
+            return true;
+          }
         }
       }
 
@@ -11997,8 +13111,8 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
     }
   };
 
-  // Smoothly navigate inside Pink Room (desk, upper capsule interior, corkboard, room center, or front door)
-  const handleSelectPinkView = (target: 'desk' | 'capsule' | 'board' | 'center' | 'door') => {
+  // Smoothly navigate inside Pink Room (door, desk, corkboard, white showcase cabinets, or upper capsule interior)
+  const handleSelectPinkView = (target: 'door' | 'desk' | 'board' | 'showcase' | 'capsule') => {
     normalizeCurrentYaw();
     viewLocationRef.current = target;
     setViewLocation(target);
@@ -12010,6 +13124,9 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
       targetPitchRef.current = -0.04;
     } else if (target === 'board') {
       targetYawRef.current = Math.PI / 2;
+      targetPitchRef.current = -0.02;
+    } else if (target === 'showcase') {
+      targetYawRef.current = cameraYawRef.current < 0 ? -Math.PI : Math.PI;
       targetPitchRef.current = -0.02;
     } else {
       targetYawRef.current = CENTER_YAW;
@@ -12045,7 +13162,7 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
       targetPitchRef.current = THREE.MathUtils.clamp(targetPitchRef.current, MIN_PITCH, MAX_PITCH);
     } else {
       const isPink = activeRoomRef.current === 'pink';
-      const OTHER_MIN_PITCH = ((isPink ? -22 : -14) * Math.PI) / 180;
+      const OTHER_MIN_PITCH = ((isPink ? -48 : -14) * Math.PI) / 180;
       const OTHER_MAX_PITCH = ((isPink ? 18 : 14) * Math.PI) / 180;
       targetPitchRef.current = THREE.MathUtils.clamp(
         targetPitchRef.current,
@@ -12327,6 +13444,17 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
         </div>
       )}
 
+      {/* Dakimakura Interaction Bottom Subtitle (抱抱枕點擊互動字幕) */}
+      {activeRoom === 'pink' && dakiSubtitle && (
+        <div
+          className="pointer-events-none fixed bottom-16 sm:bottom-6 left-1/2 -translate-x-1/2 z-40 whitespace-nowrap max-w-[94vw] px-4 sm:px-5 py-2 sm:py-2.5 rounded-xl bg-[#0b1320]/88 backdrop-blur-md border border-sky-200/35 text-sky-50 text-xs sm:text-base font-medium tracking-wide text-center shadow-[0_8px_28px_rgba(0,0,0,0.65)]"
+          role="status"
+          aria-live="polite"
+        >
+          {dakiSubtitle}
+        </div>
+      )}
+
       {/* Non-Lobby Rooms Bottom-Right Button(s) */}
       {activeRoom !== 'lobby' && activeRoom === 'pink' && (
         <div
@@ -12351,6 +13479,20 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
+                    handleSelectPinkView('door');
+                  }}
+                  className={`w-full px-2.5 py-1.5 rounded-lg text-xs font-medium tracking-wide active:scale-95 transition-all cursor-pointer select-none border text-center ${
+                    viewLocation === 'door'
+                      ? 'bg-[#1c4069] border-sky-200 text-white shadow-[0_0_10px_rgba(154,221,255,0.35)]'
+                      : 'bg-[#12263f]/85 border-sky-300/35 text-sky-100 hover:bg-[#193557] hover:border-sky-200/75'
+                  }`}
+                >
+                  去門前
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
                     handleSelectPinkView('desk');
                   }}
                   className={`w-full px-2.5 py-1.5 rounded-lg text-xs font-medium tracking-wide active:scale-95 transition-all cursor-pointer select-none border text-center ${
@@ -12360,20 +13502,6 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
                   }`}
                 >
                   去書桌前
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleSelectPinkView('capsule');
-                  }}
-                  className={`w-full px-2.5 py-1.5 rounded-lg text-xs font-medium tracking-wide active:scale-95 transition-all cursor-pointer select-none border text-center ${
-                    viewLocation === 'capsule'
-                      ? 'bg-[#1c4069] border-sky-200 text-white shadow-[0_0_10px_rgba(154,221,255,0.35)]'
-                      : 'bg-[#12263f]/85 border-sky-300/35 text-sky-100 hover:bg-[#193557] hover:border-sky-200/75'
-                  }`}
-                >
-                  去膠囊艙裡
                 </button>
                 <button
                   type="button"
@@ -12393,15 +13521,29 @@ export const Room3DScene: React.FC<Room3DSceneProps> = () => {
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleSelectPinkView(viewLocation === 'center' ? 'door' : 'center');
+                    handleSelectPinkView('showcase');
                   }}
                   className={`w-full px-2.5 py-1.5 rounded-lg text-xs font-medium tracking-wide active:scale-95 transition-all cursor-pointer select-none border text-center ${
-                    viewLocation === 'center'
+                    viewLocation === 'showcase'
                       ? 'bg-[#1c4069] border-sky-200 text-white shadow-[0_0_10px_rgba(154,221,255,0.35)]'
                       : 'bg-[#12263f]/85 border-sky-300/35 text-sky-100 hover:bg-[#193557] hover:border-sky-200/75'
                   }`}
                 >
-                  {viewLocation === 'center' ? '去門前' : '去房間正中央'}
+                  去展示櫃前
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleSelectPinkView('capsule');
+                  }}
+                  className={`w-full px-2.5 py-1.5 rounded-lg text-xs font-medium tracking-wide active:scale-95 transition-all cursor-pointer select-none border text-center ${
+                    viewLocation === 'capsule'
+                      ? 'bg-[#1c4069] border-sky-200 text-white shadow-[0_0_10px_rgba(154,221,255,0.35)]'
+                      : 'bg-[#12263f]/85 border-sky-300/35 text-sky-100 hover:bg-[#193557] hover:border-sky-200/75'
+                  }`}
+                >
+                  去膠囊艙裡
                 </button>
               </div>
             )}

@@ -27,8 +27,8 @@
 }
 
 /* PixelFun 2 Arrow - https://www.cursors-4u.com/cursor/pixelfun-2-arrow */
-html:not(.umiri-special-active):not(.banned-list-active) *,
-html:not(.umiri-special-active):not(.banned-list-active) {
+html *,
+html {
   cursor: url('https://cdn.cursors-4u.net/previews/normal-d39038c9-64.webp') 20 21, auto !important;
 }
 /* End www.Cursors-4U.com Code */
