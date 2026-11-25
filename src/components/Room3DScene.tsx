@@ -1472,7 +1472,7 @@ export const Room3DScene: React.FC = () => {
     });
 
     // --- 4A-1. BLACK VINYL RECORD & BLONDE WOOD EASEL ON WALL TABLE CENTER (牆邊木桌正中間黑膠唱片與底座) ---
-    const vinylCenterTexture = textureLoader.load('/assets/vinyl_center_tex.png');
+    const vinylCenterTexture = textureLoader.load('/assets/vinyl_center_tex.webp');
     vinylCenterTexture.colorSpace = THREE.SRGBColorSpace;
     vinylCenterTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
@@ -2281,7 +2281,7 @@ export const Room3DScene: React.FC = () => {
 
 
     // --- 4A-3. SUZUMI SU HANGING SCROLL TAPESTRY MOVED TO ORIGINAL WOODEN PLAQUE LOCATION (涼海紅色掛軸移至原木牌位置 X = -0.82) ---
-    const suzumiScrollTexture = textureLoader.load('/assets/suzumi_scroll_tex.png');
+    const suzumiScrollTexture = textureLoader.load('/assets/suzumi_scroll_tex.webp');
     suzumiScrollTexture.colorSpace = THREE.SRGBColorSpace;
     suzumiScrollTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
@@ -2796,7 +2796,7 @@ export const Room3DScene: React.FC = () => {
     centerTeaGroup.add(lampGroup);
 
     // --- 40CM ROUND PADDLE FAN ON TEA TABLE (優化版 40 公分直徑圓扇) ---
-    const fanTexture = textureLoader.load('/assets/round_fan_tex.png');
+    const fanTexture = textureLoader.load('/assets/round_fan_tex.webp');
     fanTexture.colorSpace = THREE.SRGBColorSpace;
     fanTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
@@ -2962,7 +2962,7 @@ export const Room3DScene: React.FC = () => {
     const RACK_W = POSTER_W + FRAME_BAR * 2; // ~0.809 m
     const BASE_D = 0.44;
 
-    const displayPosterTexture = textureLoader.load('/assets/display_rack_poster.png');
+    const displayPosterTexture = textureLoader.load('/assets/display_rack_poster.webp');
     displayPosterTexture.colorSpace = THREE.SRGBColorSpace;
     displayPosterTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
@@ -3088,7 +3088,7 @@ export const Room3DScene: React.FC = () => {
     const SCROLL_H = 1.75; // Ratio ~1 : 3.125 matching the reference banner photo
     const SHOULDER_RATIO = 1138 / 1600; // Vertical straight sides end at 71.1%
     const TIP_RATIO = 1588 / 1600; // V-tip vertex at 99.25%
-    const scrollTexture = textureLoader.load('/assets/slytherin_banner_tex.png');
+    const scrollTexture = textureLoader.load('/assets/slytherin_banner_tex.webp');
     scrollTexture.colorSpace = THREE.SRGBColorSpace;
     scrollTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
@@ -3468,7 +3468,7 @@ export const Room3DScene: React.FC = () => {
     cabinetGroupLeft.position.set(CAB2_X, 0, CAB_Z);
 
     // --- 4E-2. ACRYLIC DESK SIGN HOLDER ON 2ND TIER FROM TOP (左邊櫃子從上數下來第二層最左側壓克力立牌) ---
-    const signCardTexture = textureLoader.load('/assets/umiri_desk_sign_tex.png');
+    const signCardTexture = textureLoader.load('/assets/umiri_desk_sign_tex.webp');
     signCardTexture.colorSpace = THREE.SRGBColorSpace;
     signCardTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
@@ -3593,15 +3593,15 @@ export const Room3DScene: React.FC = () => {
     cabinetGroupLeft.add(acrylicSignGroup);
 
     // --- 4E-2b. MAKAI RIRIMU PLUSHIE POUCH ON TEA TABLE BESIDE LAMP (茶几上檯燈旁邊正面朝上平放的魔界莉莉姆娃包 - 純形狀與實拍去背材質渲染) ---
-    const ririmuFrontTex = textureLoader.load('/assets/ririmu_bag_front.png');
+    const ririmuFrontTex = textureLoader.load('/assets/ririmu_bag_front.webp');
     ririmuFrontTex.colorSpace = THREE.SRGBColorSpace;
     ririmuFrontTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
-    const ririmuBackTex = textureLoader.load('/assets/ririmu_bag_back.png');
+    const ririmuBackTex = textureLoader.load('/assets/ririmu_bag_back.webp');
     ririmuBackTex.colorSpace = THREE.SRGBColorSpace;
     ririmuBackTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
-    const ririmuSideTex = textureLoader.load('/assets/ririmu_bag_side.png');
+    const ririmuSideTex = textureLoader.load('/assets/ririmu_bag_side.webp');
     ririmuSideTex.colorSpace = THREE.SRGBColorSpace;
     ririmuSideTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
     ririmuSideTex.wrapS = THREE.RepeatWrapping;
@@ -3823,7 +3823,7 @@ export const Room3DScene: React.FC = () => {
     centerTeaGroup.add(ririmuBagGroup);
 
     // --- 4E-2B. BOMBERGIRL RAINBOW 「最愛チアモ」 COLOR RETAIL FIGURE BOX (最愛チアモ 彩盒) ---
-    const chiamoBoxFrontTex = textureLoader.load('/assets/chiamo_box_front.png');
+    const chiamoBoxFrontTex = textureLoader.load('/assets/chiamo_box_front.webp');
     chiamoBoxFrontTex.colorSpace = THREE.SRGBColorSpace;
     chiamoBoxFrontTex.wrapS = THREE.ClampToEdgeWrapping;
     chiamoBoxFrontTex.wrapT = THREE.ClampToEdgeWrapping;
@@ -4022,7 +4022,7 @@ export const Room3DScene: React.FC = () => {
     roomGroup.add(cabinetGroupLeft);
 
     // --- 4E-3. WHITE ILLUSTRATED CARDBOARD BOX ON RIGHT CABINET BOTTOM-RIGHT (右邊櫃子最下面的最右邊白色紙箱) ---
-    const whiteBoxFrontTexture = textureLoader.load('/assets/white_box_front.png');
+    const whiteBoxFrontTexture = textureLoader.load('/assets/white_box_front.webp');
     whiteBoxFrontTexture.colorSpace = THREE.SRGBColorSpace;
     whiteBoxFrontTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
@@ -5529,12 +5529,12 @@ export const Room3DScene: React.FC = () => {
           extraRoomTexturesToDispose.push(t);
           return t;
         };
-        const beyFrontLogoTex = loadBeyTex('/assets/beyblade_front_logo.png');
-        const beyLid1Tex = loadBeyTex('/assets/beyblade_lid_1.png');
-        const beyLid2Tex = loadBeyTex('/assets/beyblade_lid_2.png');
-        const beyLid3Tex = loadBeyTex('/assets/beyblade_lid_3.png');
-        const beyLidArtTex = loadBeyTex('/assets/beyblade_lid_art.png');
-        const beyChipTex = loadBeyTex('/assets/beyblade_chip.png');
+        const beyFrontLogoTex = loadBeyTex('/assets/beyblade_front_logo.webp');
+        const beyLid1Tex = loadBeyTex('/assets/beyblade_lid_1.webp');
+        const beyLid2Tex = loadBeyTex('/assets/beyblade_lid_2.webp');
+        const beyLid3Tex = loadBeyTex('/assets/beyblade_lid_3.webp');
+        const beyLidArtTex = loadBeyTex('/assets/beyblade_lid_art.webp');
+        const beyChipTex = loadBeyTex('/assets/beyblade_chip.webp');
 
         const BEY_W = 0.234;
         const BEY_H = 0.082;
@@ -5907,9 +5907,9 @@ export const Room3DScene: React.FC = () => {
           extraRoomTexturesToDispose.push(t);
           return t;
         };
-        const missyFrontTex = loadMissyTex('/assets/box_missy_front.png');
-        const missyTopTex = loadMissyTex('/assets/box_missy_top.png');
-        const missySideTex = loadMissyTex('/assets/box_missy_side.png');
+        const missyFrontTex = loadMissyTex('/assets/box_missy_front.webp');
+        const missyTopTex = loadMissyTex('/assets/box_missy_top.webp');
+        const missySideTex = loadMissyTex('/assets/box_missy_side.webp');
 
         // Procedural matching pink-rose argyle diamond pattern for secondary side/bottom faces
         const createMissyArgyleTex = () => {
@@ -6010,7 +6010,7 @@ export const Room3DScene: React.FC = () => {
         missyBoxGroup.add(missySeamBar);
 
         // B5 Slate-Indigo "方格筆記 / TAKE A TRIP 小雪戸温の交換日記" Notebook resting on Study Desk (桌上的筆記本)
-        const notebookCoverTex = textureLoader.load('/assets/desk_notebook_cover.png');
+        const notebookCoverTex = textureLoader.load('/assets/desk_notebook_cover.webp');
         notebookCoverTex.colorSpace = THREE.SRGBColorSpace;
         notebookCoverTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
         extraRoomTexturesToDispose.push(notebookCoverTex);
@@ -6130,7 +6130,7 @@ export const Room3DScene: React.FC = () => {
         deskGroup.add(deskNotebookGroup);
 
         // Jumbo Support Uchiwa Fan in Clear Zippered Cover hanging on Wall Right of Room Door (門右側牆面吊掛之「Happy Valentine's Day♡」應援推扇)
-        const uchiwaFrontTex = textureLoader.load('/assets/uchiwa_fan_front.png');
+        const uchiwaFrontTex = textureLoader.load('/assets/uchiwa_fan_front.webp');
         uchiwaFrontTex.colorSpace = THREE.SRGBColorSpace;
         uchiwaFrontTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
         extraRoomTexturesToDispose.push(uchiwaFrontTex);
@@ -7096,7 +7096,7 @@ export const Room3DScene: React.FC = () => {
         }
 
         // Takane no Nadeshiko Black Woven Pouch on Top-Left of Cube Shelf (格子櫃最上層最左邊的黑色拉鍊小包)
-        const takanePouchTex = textureLoader.load('/assets/takane_pouch_front.png');
+        const takanePouchTex = textureLoader.load('/assets/takane_pouch_front.webp');
         takanePouchTex.colorSpace = THREE.SRGBColorSpace;
         takanePouchTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
         extraRoomTexturesToDispose.push(takanePouchTex);
@@ -7222,7 +7222,7 @@ export const Room3DScene: React.FC = () => {
         cubeShelfGroup.add(pinkRirimuBag);
 
         // 3 Stacked Softly Rounded Folded SHARK T-Shirts in Cubby Column 3, Row 2 (第三直排第二格的疊衣)
-        const sharkTeeTex = textureLoader.load('/assets/shark_tee_folded.png');
+        const sharkTeeTex = textureLoader.load('/assets/shark_tee_folded.webp');
         sharkTeeTex.colorSpace = THREE.SRGBColorSpace;
         sharkTeeTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
         extraRoomTexturesToDispose.push(sharkTeeTex);
@@ -7524,15 +7524,15 @@ export const Room3DScene: React.FC = () => {
             };
 
             const shelfEaselCards: Array<[string, number, number]> = [
-              ['/assets/capsule_su_card.png', WALL_SHELF_W / 2 - 0.105, -0.14],
-              ['/assets/su_card_extra_1.png', WALL_SHELF_W / 2 - 0.250, -0.10],
-              ['/assets/su_card_extra_2.png', WALL_SHELF_W / 2 - 0.395, -0.06],
-              ['/assets/su_card_extra_3.png', WALL_SHELF_W / 2 - 0.540, -0.02],
+              ['/assets/capsule_su_card.webp', WALL_SHELF_W / 2 - 0.105, -0.14],
+              ['/assets/su_card_extra_1.webp', WALL_SHELF_W / 2 - 0.250, -0.10],
+              ['/assets/su_card_extra_2.webp', WALL_SHELF_W / 2 - 0.395, -0.06],
+              ['/assets/su_card_extra_3.webp', WALL_SHELF_W / 2 - 0.540, -0.02],
             ];
             shelfEaselCards.forEach(([path, px, ry]) => createShelfEaselCard(path, px, ry));
 
             // Suzumi Jewel-Case CD on Far-Left of Bottom Horizontal Shelf angled slightly toward Room Door (-X)
-            const shelfSuzumiCdGroup = createCdDisplayGroup('/assets/cd_su_idol_front.png', 1.38);
+            const shelfSuzumiCdGroup = createCdDisplayGroup('/assets/cd_su_idol_front.webp', 1.38);
             shelfSuzumiCdGroup.position.set(-WALL_SHELF_W / 2 + 0.125, LEDGE_TOP_Y, 0.018);
             shelfSuzumiCdGroup.rotation.y = -0.24;
             ledgeGroup.add(shelfSuzumiCdGroup);
@@ -7547,7 +7547,7 @@ export const Room3DScene: React.FC = () => {
         coloredRoomGroup.add(shelfDisplayFillLight);
 
         // Light-Blue Suzumi Su Hanging Scroll Tapestry near Display Shelf & Door (展示架旁靠近房門處的「高嶺のなでしこ 涼海すう」立體掛軸)
-        const pinkScrollTexture = textureLoader.load('/assets/pink_scroll_tex.png');
+        const pinkScrollTexture = textureLoader.load('/assets/pink_scroll_tex.webp');
         pinkScrollTexture.colorSpace = THREE.SRGBColorSpace;
         pinkScrollTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
         extraRoomTexturesToDispose.push(pinkScrollTexture);
@@ -9295,7 +9295,7 @@ export const Room3DScene: React.FC = () => {
             });
 
             // Movie Poster taped cleanly on leftmost capsule wall directly beside/above innerShelf (膠囊艙架子最左邊牆面海報)
-            const kamenPosterTex = textureLoader.load('/assets/capsule_kamen_poster.png');
+            const kamenPosterTex = textureLoader.load('/assets/capsule_kamen_poster.webp');
             kamenPosterTex.colorSpace = THREE.SRGBColorSpace;
             kamenPosterTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
             extraRoomTexturesToDispose.push(kamenPosterTex);
@@ -9334,7 +9334,7 @@ export const Room3DScene: React.FC = () => {
             podGroup.add(kamenPosterGroup);
 
             // 1. Mitered Warm-Brown Wood Photo Frame at Far Left of Inner Shelf (膠囊艙架子最左邊的木質立式相框)
-            const capsulePhotoFrameTex = textureLoader.load('/assets/capsule_photo_frame.png');
+            const capsulePhotoFrameTex = textureLoader.load('/assets/capsule_photo_frame.webp');
             capsulePhotoFrameTex.colorSpace = THREE.SRGBColorSpace;
             capsulePhotoFrameTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
             extraRoomTexturesToDispose.push(capsulePhotoFrameTex);
@@ -9524,7 +9524,7 @@ export const Room3DScene: React.FC = () => {
             podGroup.add(capsulePhotoFrameGroup);
 
             // Jewel-Case CD on Inner Shelf slightly right of Photo Frame facing forward (90 deg)
-            const capsuleCdGroup = createCdDisplayGroup('/assets/cd_su_utsukushiku_front.png', 1.15);
+            const capsuleCdGroup = createCdDisplayGroup('/assets/cd_su_utsukushiku_front.webp', 1.15);
             capsuleCdGroup.position.set(-0.482, SHELF_TOP_Y, 1.085);
             capsuleCdGroup.rotation.y = Math.PI / 2;
             podGroup.add(capsuleCdGroup);
@@ -9825,7 +9825,7 @@ export const Room3DScene: React.FC = () => {
           return tex;
         };
 
-        const oakPosterTex = textureLoader.load('/assets/capsule_oak_poster.png');
+        const oakPosterTex = textureLoader.load('/assets/capsule_oak_poster.webp');
         oakPosterTex.colorSpace = THREE.SRGBColorSpace;
         oakPosterTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
         extraRoomTexturesToDispose.push(oakPosterTex);
@@ -10348,19 +10348,19 @@ export const Room3DScene: React.FC = () => {
             const pSecondFromTopFloorY = P_PLINTH_H + P_SHELF_THICK + 4 * pTierPitch;
 
             // Left of Sayuri CD (viewer's left = -X in wallCab local coordinates)
-            const cdLeftDisplayGroup = createCdDisplayGroup('/assets/cd_bibideba_front.png', 1.55);
+            const cdLeftDisplayGroup = createCdDisplayGroup('/assets/cd_bibideba_front.webp', 1.55);
             cdLeftDisplayGroup.position.set(-0.295, pSecondFromTopFloorY, 0.095);
             cdLeftDisplayGroup.rotation.y = 0.08;
             wallCab.add(cdLeftDisplayGroup);
 
             // Center Sayuri CD
-            const cdDisplayGroup = createCdDisplayGroup('/assets/cd_cover_front.png', 1.55);
+            const cdDisplayGroup = createCdDisplayGroup('/assets/cd_cover_front.webp', 1.55);
             cdDisplayGroup.position.set(0, pSecondFromTopFloorY, 0.095);
             cdDisplayGroup.rotation.y = 0.06;
             wallCab.add(cdDisplayGroup);
 
             // Right of Sayuri CD (viewer's right = +X in wallCab local coordinates)
-            const cdRightDisplayGroup = createCdDisplayGroup('/assets/cd_takaneko_front.png', 1.55);
+            const cdRightDisplayGroup = createCdDisplayGroup('/assets/cd_takaneko_front.webp', 1.55);
             cdRightDisplayGroup.position.set(0.295, pSecondFromTopFloorY, 0.095);
             cdRightDisplayGroup.rotation.y = -0.04;
             wallCab.add(cdRightDisplayGroup);
@@ -10473,7 +10473,7 @@ export const Room3DScene: React.FC = () => {
 
         // 1. すう的通緝照片 (A1) — 偏右上角牆上
         createDeskWallPoster({
-          texPath: '/assets/desk_poster_a2.png',
+          texPath: '/assets/desk_poster_a2.webp',
           w: WANTED_W,
           h: WANTED_H,
           x: WANTED_RIGHT - WANTED_W / 2,
@@ -10518,7 +10518,7 @@ export const Room3DScene: React.FC = () => {
         const WHITE_GLASSES_GIRL_LEFT = WANTED_LEFT - POSTER_GAP - WHITE_GLASSES_GIRL_W;
         const SLOT4_BOT = SLOT3_BOT - POSTER_GAP - WHITE_GLASSES_GIRL_H;
         createDeskWallPoster({
-          texPath: '/assets/desk_poster_a3_1.png',
+          texPath: '/assets/desk_poster_a3_1.webp',
           w: WHITE_GLASSES_GIRL_W,
           h: WHITE_GLASSES_GIRL_H,
           x: WANTED_LEFT - POSTER_GAP - WHITE_GLASSES_GIRL_W / 2,
@@ -11478,164 +11478,6 @@ export const Room3DScene: React.FC = () => {
         greenCurtainGroup.add(screenMesh);
 
         coloredRoomGroup.add(greenCurtainGroup);
-
-        // Side-wall six-tier display cabinets matching the 1F Lobby cabinet design
-        const buildGreenSixTierCabinet = (opts: {
-          width: number;
-          bodyMat: THREE.Material;
-          trimMat: THREE.Material;
-          darkMat: THREE.Material;
-          backMat: THREE.Material;
-        }) => {
-          const cab = new THREE.Group();
-          const W = opts.width;
-          const D = CAB_D;
-          const H = CAB_H;
-          const P_H = PLINTH_H;
-          const C_H = CROWN_H;
-          const S_T = SIDE_THICK;
-          const SH_T = SHELF_THICK;
-
-          const plinthCore = new THREE.Mesh(
-            new THREE.BoxGeometry(W - 0.03, P_H, D - 0.03),
-            opts.darkMat
-          );
-          plinthCore.position.set(0, P_H / 2, -0.01);
-          plinthCore.castShadow = true;
-          plinthCore.receiveShadow = true;
-          cab.add(plinthCore);
-
-          const kickplate = new THREE.Mesh(
-            new THREE.BoxGeometry(W + 0.01, P_H * 0.85, 0.024),
-            opts.trimMat
-          );
-          kickplate.position.set(0, (P_H * 0.85) / 2, D / 2 - 0.008);
-          cab.add(kickplate);
-
-          const bodyHeight = H - P_H - C_H;
-          const sideGeo = new THREE.BoxGeometry(S_T, bodyHeight, D);
-          const stileGeo = new THREE.BoxGeometry(0.044, bodyHeight, 0.014);
-
-          [-1, 1].forEach((side) => {
-            const sx = side * (W / 2 - S_T / 2);
-            const sidePanel = new THREE.Mesh(sideGeo, opts.bodyMat);
-            sidePanel.position.set(sx, P_H + bodyHeight / 2, 0);
-            sidePanel.castShadow = true;
-            sidePanel.receiveShadow = true;
-            cab.add(sidePanel);
-
-            const frontStile = new THREE.Mesh(stileGeo, opts.darkMat);
-            frontStile.position.set(sx, P_H + bodyHeight / 2, D / 2 + 0.005);
-            frontStile.castShadow = true;
-            cab.add(frontStile);
-          });
-
-          const cabBack = new THREE.Mesh(
-            new THREE.BoxGeometry(W - S_T * 2 + 0.01, bodyHeight, 0.018),
-            opts.backMat
-          );
-          cabBack.position.set(0, P_H + bodyHeight / 2, -D / 2 + 0.01);
-          cabBack.receiveShadow = true;
-          cab.add(cabBack);
-
-          const innerSpanW = W - S_T * 2;
-          const shelfGeo = new THREE.BoxGeometry(innerSpanW, SH_T, D - 0.02);
-          const shelfLipGeo = new THREE.BoxGeometry(innerSpanW, SH_T + 0.004, 0.014);
-          const tierPitch = (bodyHeight - SH_T) / 6;
-
-          for (let i = 0; i <= 6; i++) {
-            const sy = P_H + SH_T / 2 + i * tierPitch;
-            const shelf = new THREE.Mesh(shelfGeo, opts.bodyMat);
-            shelf.position.set(0, sy, 0.004);
-            shelf.castShadow = true;
-            shelf.receiveShadow = true;
-            cab.add(shelf);
-
-            const shelfLip = new THREE.Mesh(shelfLipGeo, opts.darkMat);
-            shelfLip.position.set(0, sy, D / 2 - 0.003);
-            cab.add(shelfLip);
-          }
-
-          const lowerCrown = new THREE.Mesh(
-            new THREE.BoxGeometry(W + 0.028, C_H * 0.45, D + 0.022),
-            opts.darkMat
-          );
-          lowerCrown.position.set(0, H - C_H + (C_H * 0.45) / 2, 0.008);
-          lowerCrown.castShadow = true;
-          cab.add(lowerCrown);
-
-          const upperCrown = new THREE.Mesh(
-            new THREE.BoxGeometry(W + 0.06, C_H * 0.55, D + 0.044),
-            opts.trimMat
-          );
-          upperCrown.position.set(0, H - (C_H * 0.55) / 2, 0.014);
-          upperCrown.castShadow = true;
-          cab.add(upperCrown);
-
-          return cab;
-        };
-
-        // Left and Right Wall cabinets: One 2.3m, one 2.0m, and one 1.5m on both sides.
-        const sideCabConfigs = [
-          { width: 2.3, z: -2.10 },
-          { width: 2.0, z: 0.11 },
-          { width: 1.5, z: 1.92 },
-        ];
-
-        // Left Wall (X = -5.0, facing +X): 3 wooden cabinets matching 1F Lobby wood style
-        sideCabConfigs.forEach((cfg) => {
-          const leftCab = buildGreenSixTierCabinet({
-            width: cfg.width,
-            bodyMat: tableMat,
-            trimMat: tableDarkWoodMat,
-            darkMat: cabDarkMat,
-            backMat: cabBackMat,
-          });
-          leftCab.position.set(-5.0 + 0.22, 0, cfg.z);
-          leftCab.rotation.y = Math.PI / 2;
-          coloredRoomGroup.add(leftCab);
-        });
-
-        const leftCabLight = new THREE.PointLight(0xfff3e2, 0.45, 6.5, 1.2);
-        leftCabLight.position.set(-3.75, 2.30, 0.0);
-        coloredRoomGroup.add(leftCabLight);
-
-        // Right Wall (X = +2.0, facing -X): 3 cabinets matching 1F Lobby design in matte black
-        const blackCabBodyMat = new THREE.MeshStandardMaterial({
-          color: 0x18191d,
-          roughness: 0.48,
-          metalness: 0.08,
-          envMapIntensity: 0.36,
-        });
-        const blackCabTrimMat = new THREE.MeshStandardMaterial({
-          color: 0x101114,
-          roughness: 0.42,
-          metalness: 0.10,
-          envMapIntensity: 0.40,
-        });
-        const blackCabBackMat = new THREE.MeshStandardMaterial({
-          color: 0x090a0c,
-          roughness: 0.68,
-          metalness: 0.04,
-          envMapIntensity: 0.22,
-        });
-
-        sideCabConfigs.forEach((cfg) => {
-          const rightCab = buildGreenSixTierCabinet({
-            width: cfg.width,
-            bodyMat: blackCabBodyMat,
-            trimMat: blackCabTrimMat,
-            darkMat: blackCabTrimMat,
-            backMat: blackCabBackMat,
-          });
-          rightCab.position.set(2.0 - 0.22, 0, cfg.z);
-          rightCab.rotation.y = -Math.PI / 2;
-          coloredRoomGroup.add(rightCab);
-        });
-
-        const rightCabLight = new THREE.PointLight(0xffeedb, 0.45, 6.5, 1.2);
-        rightCabLight.position.set(0.75, 2.30, 0.0);
-        coloredRoomGroup.add(rightCabLight);
       }
 
       scene.add(coloredRoomGroup);
