@@ -608,9 +608,18 @@ export const MobileWebsite: React.FC = () => {
                   initial={{ opacity: 0, y: 16 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.9, delay: 1.2 }}
-                  className="text-amber-300/85 font-serif text-sm sm:text-lg tracking-[0.18em] leading-relaxed italic"
+                  className="text-amber-300/90 font-serif text-base sm:text-xl tracking-[0.18em] leading-relaxed italic"
                 >
                   「記得幫我關門 會有蚊子」
+                </motion.div>
+
+                <motion.div
+                  initial={{ opacity: 0, y: 16 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.9, delay: 2.25 }}
+                  className="text-white/50 font-sans text-xs sm:text-sm tracking-[0.15em] font-light"
+                >
+                  「東西越來越多了 載入慢敬請見諒」
                 </motion.div>
               </div>
             )}
