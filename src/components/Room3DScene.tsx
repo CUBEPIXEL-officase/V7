@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { X } from 'lucide-react';
 import { EventCalendar, CATEGORY_COLORS, getEventsForDate } from './EventCalendar';
 import { EscalatorMonologueSubpage } from './EscalatorMonologueSubpage';
@@ -38,7 +39,7 @@ export const Room3DScene: React.FC = () => {
   const SEATED_HEIGHT = 0.68; // 坐姿視線高度
   const SEATED_Z = 1.15; // 圓形茶几南側坐墊位置 (圓几半徑 0.85m + 坐墊中心 0.30m)
 
-  type ExtraRoomId = 'purple' | 'green' | 'gold' | 'pink' | 'cyan' | 'cyan_b1' | 'royalblue' | 'brown';
+  type ExtraRoomId = 'purple' | 'green' | 'gold' | 'pink' | 'cyan' | 'cyan_b1' | 'royalblue' | 'brown' | 'bathroom';
   type RoomId = 'lobby' | ExtraRoomId;
   const isLobbyStyleRoom = (id: RoomId) => id === 'lobby' || id === 'royalblue' || id === 'brown';
   const isFoyerRoom = (id: RoomId) => id === 'cyan' || id === 'cyan_b1';
@@ -52,18 +53,26 @@ export const Room3DScene: React.FC = () => {
   const [dakiSubtitle, setDakiSubtitle] = useState<string | null>(null);
   const dakiSubtitleTimerRef = useRef<number | null>(null);
   const [viewLocation, setViewLocation] = useState<
-    'table' | 'cabinet' | 'door' | 'door2' | 'center' | 'desk' | 'capsule' | 'board' | 'showcase'
+    'table' | 'cabinet' | 'door' | 'door2' | 'center' | 'desk' | 'capsule' | 'board' | 'showcase' | 'tub' | 'balcony' | 'chair' | 'secret'
   >('table');
   const viewLocationRef = useRef<
-    'table' | 'cabinet' | 'door' | 'door2' | 'center' | 'desk' | 'capsule' | 'board' | 'showcase'
+    'table' | 'cabinet' | 'door' | 'door2' | 'center' | 'desk' | 'capsule' | 'board' | 'showcase' | 'tub' | 'balcony' | 'chair' | 'secret'
   >('table');
   const [activeRoom, setActiveRoom] = useState<RoomId>('lobby');
   const activeRoomRef = useRef<RoomId>('lobby');
   const [isCyanFloorDialogOpen, setIsCyanFloorDialogOpen] = useState(false);
   const isCyanFloorDialogOpenRef = useRef(false);
   const [isPinkNavOpen, setIsPinkNavOpen] = useState(false);
+  const [isBathNavOpen, setIsBathNavOpen] = useState(false);
+  const bathWindowOpenRef = useRef<boolean>(false);
+  const bathWindowSlideProgressRef = useRef<number>(0);
+  const bathWindowLeftLeafRef = useRef<THREE.Group | null>(null);
+  const bathWindowRightLeafRef = useRef<THREE.Group | null>(null);
+  const bathWindowHitboxRef = useRef<THREE.Mesh | null>(null);
+  const balconyRockerPivotRef = useRef<THREE.Group | null>(null);
+  const balconyRockerHitboxRef = useRef<THREE.Mesh | null>(null);
   const enterPortalRoomRef = useRef<
-    ((targetRoom: RoomId, spawnView?: 'table' | 'door' | 'door2') => void) | null
+    ((targetRoom: RoomId, spawnView?: 'table' | 'door' | 'door2' | 'center' | 'tub' | 'balcony' | 'chair') => void) | null
   >(null);
   const portalVeilRef = useRef<HTMLDivElement | null>(null);
   const portalSwapTimeoutRef = useRef<number | null>(null);
@@ -109,6 +118,27 @@ export const Room3DScene: React.FC = () => {
   // Green Room (迷你像素紀念館) Wall White Curtain & 1st-Gen Desktop Transition Animator Ref
   const greenScreenAnimatorRef = useRef<{ update: (delta: number) => void } | null>(null);
 
+  // Pink Room Recessed Bookcase Tier-3 Secret Yellow Book & Control Lever Refs (3-click pull-out + secret sinking mechanism)
+  const recessedBookcaseGroupRef = useRef<THREE.Group | null>(null);
+  const bookcaseRetractProgRef = useRef<number>(0);
+  const yellowBookGroupRef = useRef<THREE.Group | null>(null);
+  const yellowBookHitboxRef = useRef<THREE.Mesh | null>(null);
+  const yellowBookClickCountRef = useRef<number>(0);
+  const yellowBookExtractProgRef = useRef<number>(0);
+  const yellowBookStagePullRef = useRef<number>(0);
+  const yellowBookRestPosRef = useRef<THREE.Vector3 | null>(null);
+  const yellowBookOutPosRef = useRef<THREE.Vector3 | null>(null);
+  const bookcaseLeverPivotRef = useRef<THREE.Group | null>(null);
+  const bookcaseLeverHitboxRef = useRef<THREE.Mesh | null>(null);
+  const bookcaseLeverPulledRef = useRef<boolean>(false);
+  const bookcaseLeverAngleRef = useRef<number>(0);
+  const secretInsideLeverHitboxRef = useRef<THREE.Mesh | null>(null);
+  const secretInsideLeverPivotRef = useRef<THREE.Group | null>(null);
+  const secretPassageHitboxRef = useRef<THREE.Mesh | null>(null);
+  const bookcaseBackHitboxRef = useRef<THREE.Mesh | null>(null);
+  const secretRoomSpaceHitboxRef = useRef<THREE.Mesh | null>(null);
+  const bookcaseAutoResetTimerRef = useRef<number | null>(null);
+
   // Table Lamp 3D Object Refs for interactive tap & light control
   const lampGroupRef = useRef<THREE.Group | null>(null);
   const lampHitboxRef = useRef<THREE.Mesh | null>(null);
@@ -147,6 +177,7 @@ export const Room3DScene: React.FC = () => {
     plaqueMat: THREE.MeshStandardMaterial | null;
     plaqueTitles?: Partial<Record<number, string>>;
     defaultPlaqueTitle?: string;
+    onPlaqueTitleChange?: (title: string) => void;
     sectorMats: THREE.MeshStandardMaterial[];
     rimGemMats: THREE.MeshStandardMaterial[];
     colors: readonly [number, number, number, number];
@@ -182,7 +213,13 @@ export const Room3DScene: React.FC = () => {
     purple: createInitialExtraRoomState(),
     green: createInitialExtraRoomState(),
     gold: createInitialExtraRoomState(),
-    pink: createInitialExtraRoomState(),
+    pink: createInitialExtraRoomState(
+      [0xe8eef5, 0x3b82f6, 0x111216, 0x111216], // 上: 銀色(回 B1 門廊), 右: 藍色(洗手間/浴室), 下/左: 黑色(未開放)
+      [true, true, false, false],
+      0,
+      0
+    ),
+    bathroom: createInitialExtraRoomState(), // Top: 銀色(回阿璃的宿舍), 其餘三個黑色
     cyan: createInitialExtraRoomState(
       [0x111216, 0x111216, 0x111216, 0x06b6d4],
       [false, false, false, true],
@@ -4826,12 +4863,55 @@ export const Room3DScene: React.FC = () => {
       cBackWall.receiveShadow = true;
       coloredRoomGroup.add(cBackWall);
 
-      const cLeftWall = new THREE.Mesh(new THREE.PlaneGeometry(PR_SIZE, PR_HEIGHT), makeColoredWallMat());
-      cLeftWall.position.set(-5.0, PR_HEIGHT / 2, 0);
-      cLeftWall.rotation.y = Math.PI / 2;
-      cLeftWall.receiveShadow = true;
-      coloredRoomGroup.add(cLeftWall);
+      // Left Wall (X = -5.0) - For Pink Room, has an opening for the secret recessed bookcase & passage
+      const PINK_BK_Z_MIN = -2.20;
+      const PINK_BK_Z_MAX = -0.60;
+      const PINK_BK_Y_MAX = 2.40;
 
+      if (roomId === 'pink') {
+        const leftWallFrontLen = PINK_BK_Z_MIN - -PR_SIZE / 2; // 1.30m
+        const leftWallRearLen = PR_SIZE / 2 - PINK_BK_Z_MAX;   // 4.10m
+        const leftWallDoorwayW = PINK_BK_Z_MAX - PINK_BK_Z_MIN; // 1.60m
+        const leftWallHeaderH = PR_HEIGHT - PINK_BK_Y_MAX;     // 0.60m
+
+        // Front section of left wall (beside entrance door corner & umbrella stand)
+        const lwFront = new THREE.Mesh(
+          new THREE.PlaneGeometry(leftWallFrontLen, PR_HEIGHT),
+          makeColoredWallMat()
+        );
+        lwFront.position.set(-5.0, PR_HEIGHT / 2, (-PR_SIZE / 2 + PINK_BK_Z_MIN) / 2);
+        lwFront.rotation.y = Math.PI / 2;
+        lwFront.receiveShadow = true;
+        coloredRoomGroup.add(lwFront);
+
+        // Rear section of left wall (beside capsule pods)
+        const lwRear = new THREE.Mesh(
+          new THREE.PlaneGeometry(leftWallRearLen, PR_HEIGHT),
+          makeColoredWallMat()
+        );
+        lwRear.position.set(-5.0, PR_HEIGHT / 2, (PINK_BK_Z_MAX + PR_SIZE / 2) / 2);
+        lwRear.rotation.y = Math.PI / 2;
+        lwRear.receiveShadow = true;
+        coloredRoomGroup.add(lwRear);
+
+        // Header panel above the secret doorway opening
+        const lwHeader = new THREE.Mesh(
+          new THREE.PlaneGeometry(leftWallDoorwayW, leftWallHeaderH),
+          makeColoredWallMat()
+        );
+        lwHeader.position.set(-5.0, PINK_BK_Y_MAX + leftWallHeaderH / 2, (PINK_BK_Z_MIN + PINK_BK_Z_MAX) / 2);
+        lwHeader.rotation.y = Math.PI / 2;
+        lwHeader.receiveShadow = true;
+        coloredRoomGroup.add(lwHeader);
+      } else {
+        const cLeftWall = new THREE.Mesh(new THREE.PlaneGeometry(PR_SIZE, PR_HEIGHT), makeColoredWallMat());
+        cLeftWall.position.set(-5.0, PR_HEIGHT / 2, 0);
+        cLeftWall.rotation.y = Math.PI / 2;
+        cLeftWall.receiveShadow = true;
+        coloredRoomGroup.add(cLeftWall);
+      }
+
+      // Right Wall (X = 2.0) - Standard full wall
       const cRightWall = new THREE.Mesh(new THREE.PlaneGeometry(PR_SIZE, PR_HEIGHT), makeColoredWallMat());
       cRightWall.position.set(2.0, PR_HEIGHT / 2, 0);
       cRightWall.rotation.y = -Math.PI / 2;
@@ -4840,12 +4920,22 @@ export const Room3DScene: React.FC = () => {
 
       // Baseboards
       const cBaseboardMat = new THREE.MeshStandardMaterial({ color: theme.baseboardColor, roughness: 0.55 });
-      [
+      const baseboardSpecs: [number, number, number, number, number, number][] = [
         [PR_SIZE, 0.1, 0.04, PR_CENTER_X, 0.05, PR_SIZE / 2 - 0.02],
-        [0.04, 0.1, PR_SIZE, -5.0 + 0.02, 0.05, 0],
         [0.04, 0.1, PR_SIZE, 2.0 - 0.02, 0.05, 0],
         [PR_SIZE, 0.1, 0.04, PR_CENTER_X, 0.05, -PR_SIZE / 2 + 0.02],
-      ].forEach(([bw, bh, bd, bx, by, bz]) => {
+      ];
+      if (roomId === 'pink') {
+        const frontBbLen = PINK_BK_Z_MIN - -PR_SIZE / 2;
+        const rearBbLen = PR_SIZE / 2 - PINK_BK_Z_MAX;
+        baseboardSpecs.push(
+          [0.04, 0.1, frontBbLen, -5.0 + 0.02, 0.05, (-PR_SIZE / 2 + PINK_BK_Z_MIN) / 2],
+          [0.04, 0.1, rearBbLen, -5.0 + 0.02, 0.05, (PINK_BK_Z_MAX + PR_SIZE / 2) / 2]
+        );
+      } else {
+        baseboardSpecs.push([0.04, 0.1, PR_SIZE, -5.0 + 0.02, 0.05, 0]);
+      }
+      baseboardSpecs.forEach(([bw, bh, bd, bx, by, bz]) => {
         const bb = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), cBaseboardMat);
         bb.position.set(bx, by, bz);
         coloredRoomGroup.add(bb);
@@ -4928,7 +5018,9 @@ export const Room3DScene: React.FC = () => {
         plaqueTex.colorSpace = THREE.SRGBColorSpace;
         plaqueTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
-        const renderCutePlaque = () => {
+        let currentCuteTitle = '阿璃的房間';
+        const renderCutePlaque = (titleText: string = currentCuteTitle) => {
+          currentCuteTitle = titleText;
           if (!pCtx) return;
           // Warm pale honey-cream wood plaque background
           const bg = pCtx.createLinearGradient(0, 0, 768, 256);
@@ -4993,26 +5085,36 @@ export const Room3DScene: React.FC = () => {
           drawCuteHeart(116, 86, 0.72, '#9ecae8');
           drawCuteHeart(652, 166, 0.72, '#9ecae8');
 
-          // Cute rounded lettering 「阿璃的房間」
+          // Cute rounded lettering
           pCtx.textAlign = 'center';
           pCtx.textBaseline = 'middle';
-          pCtx.font = '900 84px "Zen Maru Gothic", "PingFang TC", "Microsoft JhengHei", "Noto Sans TC", sans-serif';
+          const fontPx = titleText.length > 5 ? 66 : 84;
+          pCtx.font = `900 ${fontPx}px "Zen Maru Gothic", "PingFang TC", "Microsoft JhengHei", "Noto Sans TC", sans-serif`;
 
           pCtx.fillStyle = 'rgba(244, 151, 182, 0.35)';
-          pCtx.fillText('阿璃的房間', 387, 134);
+          pCtx.fillText(titleText, 387, 134);
 
           pCtx.fillStyle = '#5a3826';
-          pCtx.fillText('阿璃的房間', 384, 130);
+          pCtx.fillText(titleText, 384, 130);
 
           plaqueTex.needsUpdate = true;
         };
 
-        renderCutePlaque();
+        renderCutePlaque('阿璃的房間');
         if (typeof document !== 'undefined' && document.fonts) {
           document.fonts.ready.then(() => {
-            renderCutePlaque();
+            renderCutePlaque(currentCuteTitle);
           });
         }
+
+        roomState.defaultPlaqueTitle = 'B1';
+        roomState.plaqueTitles = {
+          0: '阿璃的房間',
+          1: '洗手間/浴室',
+        };
+        roomState.onPlaqueTitleChange = (nextTitle: string) => {
+          renderCutePlaque(nextTitle);
+        };
 
         extraRoomTexturesToDispose.push(plaqueTex);
         pinkCutePlaqueTex = plaqueTex;
@@ -7530,12 +7632,145 @@ export const Room3DScene: React.FC = () => {
               ['/assets/su_card_extra_3.webp', WALL_SHELF_W / 2 - 0.540, -0.02],
             ];
             shelfEaselCards.forEach(([path, px, ry]) => createShelfEaselCard(path, px, ry));
+          }
 
-            // Suzumi Jewel-Case CD on Far-Left of Bottom Horizontal Shelf angled slightly toward Room Door (-X)
-            const shelfSuzumiCdGroup = createCdDisplayGroup('/assets/cd_su_idol_front.webp', 1.38);
-            shelfSuzumiCdGroup.position.set(-WALL_SHELF_W / 2 + 0.125, LEDGE_TOP_Y, 0.018);
-            shelfSuzumiCdGroup.rotation.y = -0.24;
-            ledgeGroup.add(shelfSuzumiCdGroup);
+          // Bandai 30MS Option Hair Style Parts Vol.10 Box on Far-Right of 2nd Horizontal Wall Shelf (房間橫架第二層最右邊的盒子)
+          if (tier === 2) {
+            const LEDGE_TOP_Y = WALL_SHELF_T / 2;
+            const load30msTex = (url: string) => {
+              const t = textureLoader.load(url);
+              t.colorSpace = THREE.SRGBColorSpace;
+              t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+              extraRoomTexturesToDispose.push(t);
+              return t;
+            };
+            const box30msFrontTex = load30msTex('/assets/box_30ms_front.webp');
+            const box30msLeftTex = load30msTex('/assets/box_30ms_left.webp');
+            const box30msRightTex = load30msTex('/assets/box_30ms_right.webp');
+
+            const create30msSecondaryPanelTex = (variant: 'top' | 'bottom' | 'back') => {
+              const c = document.createElement('canvas');
+              c.width = variant === 'back' ? 512 : 512;
+              c.height = variant === 'back' ? 640 : 192;
+              const ctx = c.getContext('2d');
+              if (ctx) {
+                const w = c.width;
+                const h = c.height;
+                ctx.fillStyle = '#eceff3';
+                ctx.fillRect(0, 0, w, h);
+
+                // Subtle white-gray hex grid feel
+                ctx.strokeStyle = 'rgba(180, 190, 204, 0.25)';
+                ctx.lineWidth = 1.5;
+                for (let gy = 0; gy < h; gy += 28) {
+                  ctx.beginPath();
+                  ctx.moveTo(0, gy);
+                  ctx.lineTo(w, gy);
+                  ctx.stroke();
+                }
+
+                if (variant === 'top') {
+                  // Pastel pink & charcoal diagonal 30MS header bar on top lid
+                  ctx.fillStyle = '#e79ab2';
+                  ctx.fillRect(0, 0, w, 46);
+                  ctx.fillStyle = '#1d2026';
+                  ctx.fillRect(0, h - 28, w, 28);
+                  ctx.fillStyle = '#ffffff';
+                  ctx.font = 'bold 28px sans-serif';
+                  ctx.textAlign = 'center';
+                  ctx.fillText('30MS OPTION HAIR STYLE PARTS Vol.10', w / 2, h / 2 + 12);
+                } else if (variant === 'back') {
+                  ctx.fillStyle = '#e79ab2';
+                  ctx.fillRect(0, 0, w, 64);
+                  ctx.fillStyle = '#1d2026';
+                  ctx.fillRect(0, 64, w, 16);
+                  ctx.fillStyle = '#ffffff';
+                  ctx.fillRect(42, h - 130, 190, 82);
+                  ctx.fillStyle = '#1e293b';
+                  for (let bx = 56; bx < 216; bx += 6) {
+                    ctx.fillRect(bx, h - 116, bx % 12 === 0 ? 3 : 1.5, 52);
+                  }
+                } else {
+                  ctx.fillStyle = '#ffffff';
+                  ctx.fillRect(w * 0.28, 36, w * 0.44, h - 72);
+                  ctx.fillStyle = '#1e293b';
+                  for (let bx = w * 0.32; bx < w * 0.68; bx += 7) {
+                    ctx.fillRect(bx, 54, bx % 14 === 0 ? 3 : 1.5, h - 108);
+                  }
+                }
+              }
+              const tex = new THREE.CanvasTexture(c);
+              tex.colorSpace = THREE.SRGBColorSpace;
+              tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+              extraRoomTexturesToDispose.push(tex);
+              return tex;
+            };
+
+            const box30msTopTex = create30msSecondaryPanelTex('top');
+            const box30msBottomTex = create30msSecondaryPanelTex('bottom');
+            const box30msBackTex = create30msSecondaryPanelTex('back');
+
+            const BOX_30MS_H = 0.175;
+            const BOX_30MS_W = 0.139;
+            const BOX_30MS_D = 0.046;
+
+            const make30msMat = (map: THREE.Texture) =>
+              new THREE.MeshPhysicalMaterial({
+                map,
+                color: 0xffffff,
+                roughness: 0.32,
+                metalness: 0.02,
+                clearcoat: 0.46,
+                clearcoatRoughness: 0.18,
+                envMapIntensity: 0.80,
+              });
+
+            const box30msMaterials = [
+              make30msMat(box30msRightTex),  // +X right side
+              make30msMat(box30msLeftTex),   // -X left side
+              make30msMat(box30msTopTex),    // +Y top lid
+              make30msMat(box30msBottomTex), // -Y bottom
+              make30msMat(box30msFrontTex),  // +Z front
+              make30msMat(box30msBackTex),   // -Z back
+            ];
+
+            const box30msGroup = new THREE.Group();
+            const box30msMain = new THREE.Mesh(
+              new THREE.BoxGeometry(BOX_30MS_W, BOX_30MS_H, BOX_30MS_D),
+              box30msMaterials
+            );
+            box30msMain.position.y = BOX_30MS_H / 2;
+            box30msMain.castShadow = true;
+            box30msMain.receiveShadow = true;
+            box30msGroup.add(box30msMain);
+
+            // Subtle retail cardboard top-flap fold lip & hang-tab crease
+            const box30msLipMat = new THREE.MeshStandardMaterial({
+              color: 0xe3b8c6,
+              roughness: 0.52,
+              metalness: 0.02,
+            });
+            const box30msTopLip = new THREE.Mesh(
+              new THREE.BoxGeometry(BOX_30MS_W + 0.001, 0.0026, BOX_30MS_D + 0.001),
+              box30msLipMat
+            );
+            box30msTopLip.position.y = BOX_30MS_H - 0.002;
+            box30msGroup.add(box30msTopLip);
+
+            const box30msFlapSeam = new THREE.Mesh(
+              new THREE.BoxGeometry(BOX_30MS_W - 0.008, 0.0015, 0.0022),
+              box30msLipMat
+            );
+            box30msFlapSeam.position.set(0, BOX_30MS_H + 0.0005, -BOX_30MS_D / 2 + 0.006);
+            box30msGroup.add(box30msFlapSeam);
+
+            box30msGroup.position.set(
+              WALL_SHELF_W / 2 - BOX_30MS_W / 2 - 0.045,
+              LEDGE_TOP_Y,
+              0.025
+            );
+            box30msGroup.rotation.y = -0.14;
+            ledgeGroup.add(box30msGroup);
           }
 
           coloredRoomGroup.add(ledgeGroup);
@@ -7730,6 +7965,1543 @@ export const Room3DScene: React.FC = () => {
         });
 
         coloredRoomGroup.add(curtainGroup);
+
+        // Recessed Light-Blue Built-in Wall Bookcase on the Left Wall in front of Capsule Pods (門的左側、膠囊艙靠著的牆壁前面空區)
+        const BK_W = PINK_BK_Z_MAX - PINK_BK_Z_MIN; // 1.60m wide opening (Z ∈ [-2.20, -0.60])
+        const BK_CENTER_Z = (PINK_BK_Z_MIN + PINK_BK_Z_MAX) / 2; // -1.40
+        const BK_H = PINK_BK_Y_MAX; // 2.40m tall
+        const BK_D = 0.28; // 28cm recessed depth into the wall (-X)
+        const BK_SIDE_T = 0.032;
+        const BK_BACK_T = 0.016;
+        const BK_PLINTH_H = 0.10;
+        const BK_TOP_T = 0.036;
+        const BK_SHELF_T = 0.024;
+        const BK_TIERS = 6;
+
+        const recessedBookcaseGroup = new THREE.Group();
+        // Local +Z points into room (+X), local -Z recesses inward into wall (-X), local +X points along -Z
+        recessedBookcaseGroup.position.set(-5.0, 0, BK_CENTER_Z);
+        recessedBookcaseGroup.rotation.y = Math.PI / 2;
+        recessedBookcaseGroupRef.current = recessedBookcaseGroup;
+
+        const bkWoodTex = coolWhiteWoodBaseTex.clone();
+        bkWoodTex.repeat.set(1.5, 2.0);
+        bkWoodTex.needsUpdate = true;
+        extraRoomTexturesToDispose.push(bkWoodTex);
+
+        // Vertical beadboard back-panel texture in soft light blue
+        const bkBackCanvas = document.createElement('canvas');
+        bkBackCanvas.width = 512;
+        bkBackCanvas.height = 512;
+        const bkBCtx = bkBackCanvas.getContext('2d');
+        if (bkBCtx) {
+          bkBCtx.fillStyle = '#97c7e7';
+          bkBCtx.fillRect(0, 0, 512, 512);
+          for (let px = 0; px < 512; px += 32) {
+            bkBCtx.fillStyle = 'rgba(58, 108, 146, 0.22)';
+            bkBCtx.fillRect(px, 0, 2, 512);
+            bkBCtx.fillStyle = 'rgba(232, 246, 255, 0.22)';
+            bkBCtx.fillRect(px + 2, 0, 1.5, 512);
+          }
+          for (let y = 0; y < 512; y += 3) {
+            bkBCtx.fillStyle = y % 6 === 0 ? 'rgba(255,255,255,0.03)' : 'rgba(40,84,120,0.03)';
+            bkBCtx.fillRect(0, y, 512, 1.5);
+          }
+        }
+        const bkBackTex = new THREE.CanvasTexture(bkBackCanvas);
+        bkBackTex.colorSpace = THREE.SRGBColorSpace;
+        bkBackTex.wrapS = THREE.RepeatWrapping;
+        bkBackTex.wrapT = THREE.RepeatWrapping;
+        bkBackTex.repeat.set(1.5, 2.0);
+        bkBackTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        extraRoomTexturesToDispose.push(bkBackTex);
+
+        const bkBlueMainMat = new THREE.MeshStandardMaterial({
+          map: bkWoodTex,
+          color: 0xb6def7,
+          roughness: 0.44,
+          metalness: 0.02,
+          envMapIntensity: 0.56,
+        });
+        const bkBlueInnerMat = new THREE.MeshStandardMaterial({
+          map: bkWoodTex,
+          color: 0xa4d2f0,
+          roughness: 0.48,
+          metalness: 0.02,
+          envMapIntensity: 0.46,
+        });
+        const bkBlueBackMat = new THREE.MeshStandardMaterial({
+          map: bkBackTex,
+          color: 0xffffff,
+          roughness: 0.62,
+          metalness: 0.01,
+          envMapIntensity: 0.32,
+        });
+        const bkBlueTrimMat = new THREE.MeshStandardMaterial({
+          color: 0xc5e6fa,
+          roughness: 0.38,
+          metalness: 0.03,
+          envMapIntensity: 0.62,
+        });
+
+        const leverSteelMat = new THREE.MeshStandardMaterial({
+          color: 0x3b424d,
+          roughness: 0.38,
+          metalness: 0.82,
+          envMapIntensity: 1.15,
+        });
+        const leverBrassMat = new THREE.MeshStandardMaterial({
+          color: 0xd1a34b,
+          roughness: 0.26,
+          metalness: 0.88,
+          envMapIntensity: 1.30,
+        });
+
+        // Recessed inner back wall panel (at z = -BK_D + BK_BACK_T/2)
+        const bkBackPanel = new THREE.Mesh(
+          new THREE.BoxGeometry(BK_W - BK_SIDE_T * 2 + 0.01, BK_H, BK_BACK_T),
+          bkBlueBackMat
+        );
+        bkBackPanel.position.set(0, BK_H / 2, -BK_D + BK_BACK_T / 2);
+        bkBackPanel.receiveShadow = true;
+        recessedBookcaseGroup.add(bkBackPanel);
+
+        // Authentic Vintage Bookcase Back (facing secret room side, local -Z)
+        const bkRearWoodMat = new THREE.MeshStandardMaterial({
+          color: 0x3a2216,
+          roughness: 0.68,
+          metalness: 0.03,
+          envMapIntensity: 0.40,
+        });
+        const bkRearBoard = new THREE.Mesh(
+          new THREE.BoxGeometry(BK_W - 0.01, BK_H - 0.02, 0.022),
+          bkRearWoodMat
+        );
+        bkRearBoard.position.set(0, BK_H / 2, -BK_D - 0.011);
+        bkRearBoard.castShadow = true;
+        bkRearBoard.receiveShadow = true;
+        recessedBookcaseGroup.add(bkRearBoard);
+
+        // Heavy timber stiles and rails on bookcase back
+        const bkBraceMat = new THREE.MeshStandardMaterial({ color: 0x2c170d, roughness: 0.62 });
+        [-BK_W / 2 + 0.06, 0, BK_W / 2 - 0.06].forEach((vx) => {
+          const vStile = new THREE.Mesh(new THREE.BoxGeometry(0.06, BK_H - 0.04, 0.012), bkBraceMat);
+          vStile.position.set(vx, BK_H / 2, -BK_D - 0.024);
+          recessedBookcaseGroup.add(vStile);
+        });
+        [0.15, BK_H / 2, BK_H - 0.15].forEach((hy) => {
+          const hRail = new THREE.Mesh(new THREE.BoxGeometry(BK_W - 0.02, 0.08, 0.012), bkBraceMat);
+          hRail.position.set(0, hy, -BK_D - 0.024);
+          recessedBookcaseGroup.add(hRail);
+        });
+
+        // Secret Door Back Release Latch plate and handle on bookcase back
+        const bkRearLatchPlate = new THREE.Mesh(
+          new THREE.BoxGeometry(0.12, 0.20, 0.014),
+          leverSteelMat
+        );
+        bkRearLatchPlate.position.set(0, 1.25, -BK_D - 0.028);
+        recessedBookcaseGroup.add(bkRearLatchPlate);
+
+        const bkRearLatchHandle = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.012, 0.012, 0.14, 12),
+          leverBrassMat
+        );
+        bkRearLatchHandle.rotation.z = Math.PI / 2;
+        bkRearLatchHandle.position.set(0, 1.25, -BK_D - 0.042);
+        recessedBookcaseGroup.add(bkRearLatchHandle);
+
+        // Hitbox for clicking the back of the bookcase from inside secret room to walk outside
+        const bkBackHitbox = new THREE.Mesh(
+          new THREE.BoxGeometry(BK_W, BK_H, 0.18),
+          new THREE.MeshBasicMaterial({ visible: false })
+        );
+        bkBackHitbox.position.set(0, BK_H / 2, -BK_D - 0.05);
+        bkBackHitbox.name = 'bookcase-back-exit-hitbox';
+        recessedBookcaseGroup.add(bkBackHitbox);
+        bookcaseBackHitboxRef.current = bkBackHitbox;
+
+        // Recessed left & right inner side jambs
+        const bkSideGeo = new THREE.BoxGeometry(BK_SIDE_T, BK_H, BK_D + 0.004);
+        [-1, 1].forEach((side) => {
+          const jamb = new THREE.Mesh(bkSideGeo, bkBlueInnerMat);
+          jamb.position.set(side * (BK_W / 2 - BK_SIDE_T / 2), BK_H / 2, -BK_D / 2 + 0.002);
+          jamb.castShadow = true;
+          jamb.receiveShadow = true;
+          recessedBookcaseGroup.add(jamb);
+        });
+
+        // Recessed bottom kickplate plinth (Y ∈ [0, BK_PLINTH_H]) + top soffit board
+        const bkInnerW = BK_W - BK_SIDE_T * 2;
+        const bkPlinth = new THREE.Mesh(
+          new THREE.BoxGeometry(bkInnerW, BK_PLINTH_H, BK_D - BK_BACK_T - 0.016),
+          bkBlueInnerMat
+        );
+        bkPlinth.position.set(0, BK_PLINTH_H / 2, -BK_D / 2 + BK_BACK_T / 2 - 0.008);
+        bkPlinth.receiveShadow = true;
+        recessedBookcaseGroup.add(bkPlinth);
+
+        const bkTopSoffit = new THREE.Mesh(
+          new THREE.BoxGeometry(bkInnerW, BK_TOP_T, BK_D + 0.004),
+          bkBlueMainMat
+        );
+        bkTopSoffit.position.set(0, BK_H - BK_TOP_T / 2, -BK_D / 2 + 0.002);
+        bkTopSoffit.castShadow = true;
+        bkTopSoffit.receiveShadow = true;
+        recessedBookcaseGroup.add(bkTopSoffit);
+
+        // Flush/slightly proud light-blue outer architrave molding framing the wall cutout
+        const TRIM_W = 0.044;
+        const TRIM_D = 0.018;
+        [-1, 1].forEach((side) => {
+          const sideCasingMat = bkBlueTrimMat.clone();
+          sideCasingMat.polygonOffset = true;
+          sideCasingMat.polygonOffsetFactor = -2;
+          sideCasingMat.polygonOffsetUnits = -2;
+
+          const sideCasing = new THREE.Mesh(
+            new THREE.BoxGeometry(TRIM_W, BK_H + 0.042, TRIM_D),
+            sideCasingMat
+          );
+          sideCasing.position.set(side * (BK_W / 2 + 0.006), (BK_H + 0.042) / 2, 0.004);
+          sideCasing.castShadow = true;
+          sideCasing.receiveShadow = true;
+          recessedBookcaseGroup.add(sideCasing);
+        });
+
+        const topLintelMat = bkBlueTrimMat.clone();
+        topLintelMat.polygonOffset = true;
+        topLintelMat.polygonOffsetFactor = -2;
+        topLintelMat.polygonOffsetUnits = -2;
+
+        const topLintel = new THREE.Mesh(
+          new THREE.BoxGeometry(BK_W + 0.104, 0.050, 0.022),
+          topLintelMat
+        );
+        topLintel.position.set(0, BK_H + 0.017, 0.006);
+        topLintel.castShadow = true;
+        topLintel.receiveShadow = true;
+        recessedBookcaseGroup.add(topLintel);
+
+        const topCrownCap = new THREE.Mesh(
+          new THREE.BoxGeometry(BK_W + 0.128, 0.018, 0.030),
+          bkBlueMainMat
+        );
+        topCrownCap.position.set(0, BK_H + 0.050, 0.009);
+        topCrownCap.castShadow = true;
+        recessedBookcaseGroup.add(topCrownCap);
+
+        // 6 Shelf Bays from bottom sill (Y = BK_PLINTH_H) up to top soffit (Y = BK_H - BK_TOP_T)
+        const bkShelfSpanY = BK_H - BK_TOP_T - BK_PLINTH_H;
+        const bkTierPitch = bkShelfSpanY / BK_TIERS; // ~0.374m per tier
+        const bkShelfDepth = BK_D - BK_BACK_T;
+        const bkShelfGeo = new THREE.BoxGeometry(bkInnerW, BK_SHELF_T, bkShelfDepth);
+        const bkShelfLipGeo = new THREE.BoxGeometry(bkInnerW, BK_SHELF_T + 0.004, 0.010);
+
+        for (let s = 0; s < BK_TIERS; s++) {
+          const shelfCenterY = BK_PLINTH_H + BK_SHELF_T / 2 + s * bkTierPitch;
+          const shelfBoard = new THREE.Mesh(bkShelfGeo, bkBlueMainMat);
+          shelfBoard.position.set(0, shelfCenterY, -BK_D / 2 + BK_BACK_T / 2);
+          shelfBoard.castShadow = true;
+          shelfBoard.receiveShadow = true;
+          recessedBookcaseGroup.add(shelfBoard);
+
+          const shelfLip = new THREE.Mesh(bkShelfLipGeo, bkBlueTrimMat);
+          shelfLip.position.set(0, shelfCenterY, 0.001);
+          shelfLip.castShadow = true;
+          recessedBookcaseGroup.add(shelfLip);
+        }
+
+        // Procedural 16-variant Vintage Blue-Gray / Gray / Off-White / Dark Blue Book-Spine Texture Atlas (1024×512)
+        const vintageSlatePalette = [
+          '#4c6073', // vintage blue-gray
+          '#4b5058', // vintage charcoal gray
+          '#c7c9c6', // vintage stone off-white
+          '#1d2d44', // vintage deep navy
+          '#62778b', // muted slate blue-gray
+          '#6b7078', // dusty pewter gray
+          '#d6d3cb', // aged parchment off-white
+          '#263a54', // aged Prussian dark blue
+          '#566b7d', // faded slate blue-gray
+          '#848991', // weathered ash gray
+          '#bcc2c7', // cool mist off-white
+          '#1a2639', // deep ink dark blue
+          '#73899c', // misty steel blue-gray
+          '#5a6068', // stormy graphite gray
+          '#cfc9be', // antique oatmeal off-white
+          '#2f4562', // dusty deep indigo
+        ];
+        const spineAtlasCanvas = document.createElement('canvas');
+        spineAtlasCanvas.width = 1024;
+        spineAtlasCanvas.height = 512;
+        const spCtx = spineAtlasCanvas.getContext('2d');
+        if (spCtx) {
+          const colW = 64;
+          for (let c = 0; c < 16; c++) {
+            const x0 = c * colW;
+            const baseHex = vintageSlatePalette[c];
+            const baseCol = new THREE.Color(baseHex);
+            const isLightSpine = c % 4 === 2; // off-white variants
+            const darkerHex = `#${baseCol.clone().multiplyScalar(isLightSpine ? 0.78 : 0.58).getHexString()}`;
+            const lighterHex = `#${baseCol.clone().lerp(new THREE.Color('#eef2f6'), isLightSpine ? 0.25 : 0.16).getHexString()}`;
+
+            // Curved cylindrical vintage cloth/leather spine shading across each column
+            const spineGrad = spCtx.createLinearGradient(x0, 0, x0 + colW, 0);
+            spineGrad.addColorStop(0.0, darkerHex);
+            spineGrad.addColorStop(0.16, baseHex);
+            spineGrad.addColorStop(0.42, lighterHex);
+            spineGrad.addColorStop(0.75, baseHex);
+            spineGrad.addColorStop(1.0, darkerHex);
+            spCtx.fillStyle = spineGrad;
+            spCtx.fillRect(x0, 0, colW, 512);
+
+            // Subtle aged linen weave & weathered patina grain
+            for (let y = 0; y < 512; y += 4) {
+              spCtx.fillStyle = y % 8 === 0
+                ? (isLightSpine ? 'rgba(60, 68, 78, 0.05)' : 'rgba(220, 232, 245, 0.04)')
+                : 'rgba(12, 18, 28, 0.05)';
+              spCtx.fillRect(x0 + 2, y, colW - 4, 1.5);
+            }
+            for (let g = 0; g < 160; g++) {
+              const gx = x0 + 3 + ((g * 29 + c * 17) % (colW - 6));
+              const gy = (g * 53 + c * 31) % 510;
+              spCtx.fillStyle = g % 2 === 0
+                ? 'rgba(18, 24, 34, 0.12)'
+                : (isLightSpine ? 'rgba(120, 128, 138, 0.10)' : 'rgba(226, 235, 245, 0.08)');
+              spCtx.fillRect(gx, gy, 2, 3);
+            }
+
+            // Crisp dark hinge crease lines at left & right edges
+            spCtx.fillStyle = isLightSpine ? 'rgba(42, 50, 62, 0.36)' : 'rgba(10, 16, 26, 0.56)';
+            spCtx.fillRect(x0, 0, 2, 512);
+            spCtx.fillRect(x0 + colW - 2, 0, 2, 512);
+
+            // Vintage muted silver, antique champagne-gold, or slate-ink decorative rules
+            const trimColor = isLightSpine
+              ? (c === 6 || c === 14 ? '#35414f' : '#263547')
+              : c % 3 === 0
+                ? '#cfd6df'
+                : c % 3 === 1
+                  ? '#c8be9d'
+                  : '#b6c2cf';
+            [24, 34, 474, 484].forEach((ry) => {
+              spCtx.fillStyle = trimColor;
+              spCtx.fillRect(x0 + 6, ry, colW - 12, 3);
+            });
+
+            // Embossed raised spine ribs (4 or 5 bands)
+            const ribYs = c % 2 === 0 ? [92, 186, 286, 382] : [84, 170, 260, 348, 424];
+            ribYs.forEach((ry) => {
+              spCtx.fillStyle = isLightSpine ? 'rgba(46, 54, 66, 0.24)' : 'rgba(10, 15, 24, 0.44)';
+              spCtx.fillRect(x0 + 4, ry + 5, colW - 8, 5);
+              spCtx.fillStyle = isLightSpine ? 'rgba(255, 255, 255, 0.45)' : 'rgba(218, 228, 240, 0.20)';
+              spCtx.fillRect(x0 + 4, ry, colW - 8, 3);
+              spCtx.fillStyle = trimColor;
+              spCtx.fillRect(x0 + 8, ry + 2, colW - 16, 1.5);
+            });
+
+            // Antique inset spine title label patch with high-contrast vintage typography lines
+            const darkLabels = ['#1b2838', '#2c343e', '#3c4d5e', '#17202b'];
+            const lightLabels = ['#dfd9cd', '#cfd4d8', '#1d2b3b', '#2c333c'];
+            const labelFill = isLightSpine
+              ? darkLabels[(c + 1) % darkLabels.length]
+              : lightLabels[(c * 3 + 1) % lightLabels.length];
+            const isLightLabel = labelFill === '#dfd9cd' || labelFill === '#cfd4d8';
+            const inkColor = isLightLabel ? '#202c3b' : '#dfe4ea';
+
+            const labelY = c % 2 === 0 ? 106 : 98;
+            const labelH = 62;
+            spCtx.fillStyle = labelFill;
+            spCtx.fillRect(x0 + 8, labelY, colW - 16, labelH);
+            spCtx.strokeStyle = trimColor;
+            spCtx.lineWidth = 2;
+            spCtx.strokeRect(x0 + 8, labelY, colW - 16, labelH);
+
+            spCtx.fillStyle = inkColor;
+            spCtx.fillRect(x0 + 14, labelY + 14, colW - 28, 5);
+            spCtx.fillRect(x0 + 16, labelY + 26, colW - 32, 4);
+            spCtx.fillRect(x0 + 19, labelY + 38, colW - 38, 3);
+            if (c % 2 === 0) {
+              spCtx.fillStyle = labelFill;
+              spCtx.fillRect(x0 + 12, 314, colW - 24, 34);
+              spCtx.strokeStyle = trimColor;
+              spCtx.lineWidth = 1.5;
+              spCtx.strokeRect(x0 + 12, 314, colW - 24, 34);
+              spCtx.fillStyle = inkColor;
+              spCtx.fillRect(x0 + 18, 329, colW - 36, 4);
+            }
+          }
+        }
+        const spineAtlasTex = new THREE.CanvasTexture(spineAtlasCanvas);
+        spineAtlasTex.colorSpace = THREE.SRGBColorSpace;
+        spineAtlasTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        extraRoomTexturesToDispose.push(spineAtlasTex);
+
+        const pageBlockCanvas = document.createElement('canvas');
+        pageBlockCanvas.width = 256;
+        pageBlockCanvas.height = 256;
+        const pbCtx = pageBlockCanvas.getContext('2d');
+        if (pbCtx) {
+          pbCtx.fillStyle = '#e2d4b8';
+          pbCtx.fillRect(0, 0, 256, 256);
+          for (let y = 0; y < 256; y += 3) {
+            pbCtx.fillStyle = y % 6 === 0 ? 'rgba(130, 102, 68, 0.16)' : 'rgba(255, 248, 232, 0.20)';
+            pbCtx.fillRect(0, y, 256, 1.5);
+          }
+          for (let x = 0; x < 256; x += 4) {
+            pbCtx.fillStyle = x % 8 === 0 ? 'rgba(110, 82, 52, 0.10)' : 'rgba(255, 250, 238, 0.14)';
+            pbCtx.fillRect(x, 0, 1.5, 256);
+          }
+        }
+        const pageBlockTex = new THREE.CanvasTexture(pageBlockCanvas);
+        pageBlockTex.colorSpace = THREE.SRGBColorSpace;
+        pageBlockTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        extraRoomTexturesToDispose.push(pageBlockTex);
+
+        // Seeded deterministic PRNG for randomized book widths, heights, spine colors, & protruding picks
+        let bkSeed = 20261126;
+        const nextBkRand = () => {
+          bkSeed = (bkSeed * 1664525 + 1013904223) >>> 0;
+          return bkSeed / 4294967296;
+        };
+
+        const spineGeos: THREE.BufferGeometry[] = [];
+        const coverGeos: THREE.BufferGeometry[] = [];
+        const pageGeos: THREE.BufferGeometry[] = [];
+        const tempColor = new THREE.Color();
+
+        const shelfPackSpan = bkInnerW - 0.004;
+        const xPackStart = -shelfPackSpan / 2;
+        const xPackEnd = shelfPackSpan / 2;
+
+        // Track the 3-book gap on Tier 3 (index 2) where the extra-wide yellow book & control lever sit
+        let secretSlotCenterX = 0;
+        let secretSlotWidth = 0.105;
+        let secretSlotFloorY = BK_PLINTH_H + BK_SHELF_T + 2 * bkTierPitch;
+
+        for (let tier = 0; tier < BK_TIERS; tier++) {
+          const tierFloorY = BK_PLINTH_H + BK_SHELF_T + tier * bkTierPitch;
+
+          // 1. Pack books flush from left jamb to right jamb with randomized width & height
+          const tierBooks: {
+            xCenter: number;
+            thick: number;
+            height: number;
+            depth: number;
+            colIdx: number;
+            protrude: number;
+          }[] = [];
+
+          let xCursor = xPackStart;
+          let prevCol = -1;
+          while (xCursor < xPackEnd - 0.001) {
+            const remaining = xPackEnd - xCursor;
+            let bThick: number;
+            if (remaining <= 0.052) {
+              bThick = remaining;
+            } else if (remaining < 0.082) {
+              bThick = remaining * (0.46 + nextBkRand() * 0.08);
+            } else {
+              bThick = 0.021 + nextBkRand() * 0.027; // 2.1cm to 4.8cm random width
+            }
+
+            const bHeight = 0.205 + nextBkRand() * 0.107; // 20.5cm to 31.2cm random height inside 35cm bay
+            const bDepth = 0.185 + nextBkRand() * 0.045;  // 18.5cm to 23.0cm depth inside 26.4cm shelf
+
+            let colIdx = Math.floor(nextBkRand() * 16);
+            if (colIdx === prevCol) colIdx = (colIdx + 1 + Math.floor(nextBkRand() * 14)) % 16;
+            prevCol = colIdx;
+
+            tierBooks.push({
+              xCenter: xCursor + bThick / 2,
+              thick: bThick,
+              height: bHeight,
+              depth: bDepth,
+              colIdx,
+              protrude: 0,
+            });
+            xCursor += bThick;
+          }
+
+          // On the 3rd tier (tier === 2), randomly pull out 3 consecutive books to make room for the extra-wide yellow book on the control lever
+          if (tier === 2 && tierBooks.length >= 10) {
+            const minStart = Math.floor(tierBooks.length * 0.26);
+            const maxStart = Math.floor(tierBooks.length * 0.68);
+            const removeStart = minStart + Math.floor(nextBkRand() * Math.max(1, maxStart - minStart + 1));
+            const removed = tierBooks.splice(removeStart, 3);
+            const gapLeft = removed[0].xCenter - removed[0].thick / 2;
+            const gapRight = removed[removed.length - 1].xCenter + removed[removed.length - 1].thick / 2;
+            secretSlotCenterX = (gapLeft + gapRight) / 2;
+            secretSlotWidth = gapRight - gapLeft;
+            secretSlotFloorY = tierFloorY;
+          }
+
+          // 2. Pick 4–5 random books on this tier to protrude slightly outward (+Z local -> +X room)
+          const protrudeSlots = 4 + (tier % 2); // 4 or 5 protruding books per tier
+          const slotLen = tierBooks.length / protrudeSlots;
+          for (let sIdx = 0; sIdx < protrudeSlots; sIdx++) {
+            const minI = Math.floor(sIdx * slotLen);
+            const maxI = Math.min(tierBooks.length - 1, Math.floor((sIdx + 1) * slotLen) - 1);
+            if (maxI >= minI) {
+              const pick = minI + Math.floor(nextBkRand() * (maxI - minI + 1));
+              tierBooks[pick].protrude = 0.030 + nextBkRand() * 0.018; // protrudes 3.0–4.8cm
+            }
+          }
+
+          // 3. Build curved spine, leather cover boards, & cream page block per book
+          for (const bk of tierBooks) {
+            const zSpine = -0.022 + (nextBkRand() - 0.5) * 0.006 + bk.protrude;
+
+            // Curved vintage spine face (+Z facing room)
+            const sGeo = new THREE.PlaneGeometry(bk.thick * 0.992, bk.height, 4, 1);
+            const sPos = sGeo.attributes.position;
+            const sUv = sGeo.attributes.uv;
+            const halfW = bk.thick * 0.496;
+            for (let vi = 0; vi < sPos.count; vi++) {
+              const vx = sPos.getX(vi);
+              const nx = halfW > 0 ? vx / halfW : 0;
+              sPos.setZ(vi, Math.cos(nx * Math.PI * 0.5) * 0.0045);
+              const rawU = sUv.getX(vi);
+              sUv.setX(vi, (bk.colIdx + 0.04 + rawU * 0.92) / 16);
+            }
+            sPos.needsUpdate = true;
+            sUv.needsUpdate = true;
+            sGeo.computeVertexNormals();
+            sGeo.translate(bk.xCenter, tierFloorY + bk.height / 2, zSpine);
+            spineGeos.push(sGeo);
+
+            // Cloth/leather cover boards (left & right boards) tinted to match book spine shade
+            tempColor.set(vintageSlatePalette[bk.colIdx]).multiplyScalar(0.88);
+            const boardThick = Math.min(0.0032, bk.thick * 0.16);
+            const addColoredCoverBox = (w: number, h: number, d: number, cx: number, cy: number, cz: number) => {
+              const cGeo = new THREE.BoxGeometry(w, h, d);
+              cGeo.translate(cx, cy, cz);
+              const vCount = cGeo.attributes.position.count;
+              const colArr = new Float32Array(vCount * 3);
+              for (let k = 0; k < vCount; k++) {
+                colArr[k * 3] = tempColor.r;
+                colArr[k * 3 + 1] = tempColor.g;
+                colArr[k * 3 + 2] = tempColor.b;
+              }
+              cGeo.setAttribute('color', new THREE.BufferAttribute(colArr, 3));
+              coverGeos.push(cGeo);
+            };
+            addColoredCoverBox(
+              boardThick,
+              bk.height,
+              bk.depth,
+              bk.xCenter - bk.thick / 2 + boardThick / 2,
+              tierFloorY + bk.height / 2,
+              zSpine - bk.depth / 2
+            );
+            addColoredCoverBox(
+              boardThick,
+              bk.height,
+              bk.depth,
+              bk.xCenter + bk.thick / 2 - boardThick / 2,
+              tierFloorY + bk.height / 2,
+              zSpine - bk.depth / 2
+            );
+
+            // Cream parchment page block recessed cleanly inside cover boards
+            const pageW = Math.max(0.008, bk.thick - boardThick * 2 - 0.0006);
+            const pageH = bk.height - 0.008;
+            const pageD = bk.depth - 0.006;
+            const pGeo = new THREE.BoxGeometry(pageW, pageH, pageD);
+            pGeo.translate(bk.xCenter, tierFloorY + pageH / 2 + 0.004, zSpine - pageD / 2 - 0.002);
+            pageGeos.push(pGeo);
+          }
+        }
+
+        const mergedSpinesGeo = mergeGeometries(spineGeos, false);
+        const mergedCoversGeo = mergeGeometries(coverGeos, false);
+        const mergedPagesGeo = mergeGeometries(pageGeos, false);
+        spineGeos.forEach((g) => g.dispose());
+        coverGeos.forEach((g) => g.dispose());
+        pageGeos.forEach((g) => g.dispose());
+
+        if (mergedSpinesGeo) {
+          const spinesMesh = new THREE.Mesh(
+            mergedSpinesGeo,
+            new THREE.MeshStandardMaterial({
+              map: spineAtlasTex,
+              roughness: 0.62,
+              metalness: 0.08,
+              envMapIntensity: 0.45,
+            })
+          );
+          spinesMesh.castShadow = true;
+          spinesMesh.receiveShadow = true;
+          recessedBookcaseGroup.add(spinesMesh);
+        }
+        if (mergedCoversGeo) {
+          const coversMesh = new THREE.Mesh(
+            mergedCoversGeo,
+            new THREE.MeshStandardMaterial({
+              vertexColors: true,
+              roughness: 0.72,
+              metalness: 0.04,
+              envMapIntensity: 0.38,
+            })
+          );
+          coversMesh.castShadow = true;
+          coversMesh.receiveShadow = true;
+          recessedBookcaseGroup.add(coversMesh);
+        }
+        if (mergedPagesGeo) {
+          const pagesMesh = new THREE.Mesh(
+            mergedPagesGeo,
+            new THREE.MeshStandardMaterial({
+              map: pageBlockTex,
+              roughness: 0.88,
+              metalness: 0.0,
+              envMapIntensity: 0.25,
+            })
+          );
+          pagesMesh.castShadow = true;
+          pagesMesh.receiveShadow = true;
+          recessedBookcaseGroup.add(pagesMesh);
+        }
+
+        // Control Lever Mechanism mounted inside the 3-book gap on Tier 3 (操縱撥桿)
+        const leverBaseGroup = new THREE.Group();
+        leverBaseGroup.position.set(secretSlotCenterX, secretSlotFloorY, 0);
+
+        const leverGripMat = new THREE.MeshStandardMaterial({
+          color: 0x1e242c,
+          roughness: 0.65,
+          metalness: 0.18,
+          envMapIntensity: 0.55,
+        });
+        const leverKnobMat = new THREE.MeshPhysicalMaterial({
+          color: 0xb91c1c,
+          roughness: 0.22,
+          metalness: 0.12,
+          clearcoat: 0.72,
+          envMapIntensity: 1.10,
+        });
+
+        const escutcheonPlate = new THREE.Mesh(
+          new THREE.BoxGeometry(0.068, 0.155, 0.012),
+          leverSteelMat
+        );
+        escutcheonPlate.position.set(0, 0.105, -BK_D + BK_BACK_T + 0.006);
+        escutcheonPlate.castShadow = true;
+        escutcheonPlate.receiveShadow = true;
+        leverBaseGroup.add(escutcheonPlate);
+
+        [
+          [-0.024, 0.168],
+          [0.024, 0.168],
+          [-0.024, 0.042],
+          [0.024, 0.042],
+        ].forEach(([rx, ry]) => {
+          const rivet = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.0045, 0.0045, 0.008, 8),
+            leverBrassMat
+          );
+          rivet.rotation.x = Math.PI / 2;
+          rivet.position.set(rx, ry, -BK_D + BK_BACK_T + 0.013);
+          leverBaseGroup.add(rivet);
+        });
+
+        // Twin yoke brackets & horizontal pivot axle at Y = 0.105 above shelf floor
+        const LEVER_PIVOT_Y = 0.105;
+        const LEVER_PIVOT_Z = -0.222;
+        [-0.016, 0.016].forEach((yx) => {
+          const yoke = new THREE.Mesh(
+            new THREE.BoxGeometry(0.009, 0.048, 0.046),
+            leverSteelMat
+          );
+          yoke.position.set(yx, LEVER_PIVOT_Y, -0.240);
+          yoke.castShadow = true;
+          leverBaseGroup.add(yoke);
+        });
+        const pivotAxle = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.007, 0.007, 0.048, 12),
+          leverBrassMat
+        );
+        pivotAxle.rotation.z = Math.PI / 2;
+        pivotAxle.position.set(0, LEVER_PIVOT_Y, LEVER_PIVOT_Z);
+        leverBaseGroup.add(pivotAxle);
+
+        // Pivoting Control Lever Arm extending forward (+Z) inside the yellow book
+        const leverPivotGroup = new THREE.Group();
+        leverPivotGroup.position.set(0, LEVER_PIVOT_Y, LEVER_PIVOT_Z);
+
+        const leverHub = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.014, 0.014, 0.022, 16),
+          leverBrassMat
+        );
+        leverHub.rotation.z = Math.PI / 2;
+        leverPivotGroup.add(leverHub);
+
+        const leverShaft = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.0075, 0.0095, 0.162, 16),
+          leverBrassMat
+        );
+        leverShaft.rotation.x = Math.PI / 2;
+        leverShaft.position.set(0, 0, 0.081);
+        leverShaft.castShadow = true;
+        leverPivotGroup.add(leverShaft);
+
+        const leverCollar = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.013, 0.013, 0.016, 16),
+          leverSteelMat
+        );
+        leverCollar.rotation.x = Math.PI / 2;
+        leverCollar.position.set(0, 0, 0.038);
+        leverPivotGroup.add(leverCollar);
+
+        const leverGripSleeve = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.0115, 0.0115, 0.042, 16),
+          leverGripMat
+        );
+        leverGripSleeve.rotation.x = Math.PI / 2;
+        leverGripSleeve.position.set(0, 0, 0.128);
+        leverPivotGroup.add(leverGripSleeve);
+
+        const leverTipKnob = new THREE.Mesh(
+          new THREE.SphereGeometry(0.017, 18, 14),
+          leverKnobMat
+        );
+        leverTipKnob.position.set(0, 0, 0.164);
+        leverTipKnob.castShadow = true;
+        leverPivotGroup.add(leverTipKnob);
+
+        const leverHitbox = new THREE.Mesh(
+          new THREE.BoxGeometry(0.085, 0.11, 0.21),
+          new THREE.MeshBasicMaterial({ visible: false })
+        );
+        leverHitbox.name = 'bookcase-lever-hitbox';
+        leverHitbox.position.set(0, 0, 0.09);
+        leverPivotGroup.add(leverHitbox);
+
+        bookcaseLeverPivotRef.current = leverPivotGroup;
+        bookcaseLeverHitboxRef.current = leverHitbox;
+        leverBaseGroup.add(leverPivotGroup);
+        recessedBookcaseGroup.add(leverBaseGroup);
+
+        // Extra-Wide Yellow Book with One White Horizontal Stripe mounted onto the Control Lever (特別寬的黃色帶白色橫條一條的書背)
+        const YELLOW_W = Math.max(0.092, secretSlotWidth - 0.003);
+        const YELLOW_H = 0.305;
+        const YELLOW_D = 0.210;
+
+        const yellowSpineCanvas = document.createElement('canvas');
+        yellowSpineCanvas.width = 256;
+        yellowSpineCanvas.height = 512;
+        const yCtx = yellowSpineCanvas.getContext('2d');
+        if (yCtx) {
+          const yGrad = yCtx.createLinearGradient(0, 0, 256, 0);
+          yGrad.addColorStop(0.0, '#1e293b');
+          yGrad.addColorStop(0.14, '#283548');
+          yGrad.addColorStop(0.42, '#38475c');
+          yGrad.addColorStop(0.78, '#2b3749');
+          yGrad.addColorStop(1.0, '#1e293b');
+          yCtx.fillStyle = yGrad;
+          yCtx.fillRect(0, 0, 256, 512);
+
+          // Subtle vintage linen weave & edge hinge creases
+          for (let y = 0; y < 512; y += 4) {
+            yCtx.fillStyle = y % 8 === 0 ? 'rgba(216, 180, 254, 0.08)' : 'rgba(15, 23, 42, 0.15)';
+            yCtx.fillRect(4, y, 248, 1.5);
+          }
+          yCtx.fillStyle = 'rgba(15, 23, 42, 0.55)';
+          yCtx.fillRect(0, 0, 5, 512);
+          // Rename variable or comment appropriately for deep blue-gray book
+          yCtx.fillRect(251, 0, 5, 512);
+
+          // One crisp light-purple horizontal stripe across the deep blue-gray spine (淺紫色橫條一條)
+          const stripeGrad = yCtx.createLinearGradient(0, 0, 256, 0);
+          stripeGrad.addColorStop(0.0, '#c084fc');
+          stripeGrad.addColorStop(0.16, '#d8b4fe');
+          stripeGrad.addColorStop(0.50, '#f3e8ff');
+          stripeGrad.addColorStop(0.84, '#d8b4fe');
+          stripeGrad.addColorStop(1.0, '#c084fc');
+          yCtx.fillStyle = stripeGrad;
+          yCtx.fillRect(0, 198, 256, 40);
+          yCtx.fillStyle = 'rgba(88, 28, 135, 0.28)';
+          yCtx.fillRect(0, 196, 256, 2);
+          yCtx.fillRect(0, 238, 256, 2);
+        }
+        const yellowSpineTex = new THREE.CanvasTexture(yellowSpineCanvas);
+        yellowSpineTex.colorSpace = THREE.SRGBColorSpace;
+        yellowSpineTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        extraRoomTexturesToDispose.push(yellowSpineTex);
+
+        const yellowBookGroup = new THREE.Group();
+        const yellowRestZ = -0.018 - YELLOW_D / 2;
+        const yellowRestY = secretSlotFloorY + YELLOW_H / 2;
+        yellowBookGroup.position.set(secretSlotCenterX, yellowRestY, yellowRestZ);
+        yellowBookRestPosRef.current = new THREE.Vector3(secretSlotCenterX, yellowRestY, yellowRestZ);
+        yellowBookOutPosRef.current = new THREE.Vector3(secretSlotCenterX, YELLOW_D / 2, 0.27);
+        yellowBookClickCountRef.current = 0;
+        yellowBookExtractProgRef.current = 0;
+        yellowBookStagePullRef.current = 0;
+
+        // Curved front spine face (+Z local -> facing room)
+        const ybSpineGeo = new THREE.PlaneGeometry(YELLOW_W * 0.996, YELLOW_H, 10, 1);
+        const ybPos = ybSpineGeo.attributes.position;
+        const ybHalfW = YELLOW_W * 0.498;
+        for (let vi = 0; vi < ybPos.count; vi++) {
+          const nx = ybHalfW > 0 ? ybPos.getX(vi) / ybHalfW : 0;
+          ybPos.setZ(vi, YELLOW_D / 2 + Math.cos(nx * Math.PI * 0.5) * 0.007);
+        }
+        ybPos.needsUpdate = true;
+        ybSpineGeo.computeVertexNormals();
+        const ybSpineMesh = new THREE.Mesh(
+          ybSpineGeo,
+          new THREE.MeshStandardMaterial({
+            map: yellowSpineTex,
+            roughness: 0.56,
+            metalness: 0.04,
+            envMapIntensity: 0.48,
+          })
+        );
+        ybSpineMesh.castShadow = true;
+        ybSpineMesh.receiveShadow = true;
+        yellowBookGroup.add(ybSpineMesh);
+
+        // Left & right thick cover boards + wrap-around stripe continuation
+        const ybCoverMat = new THREE.MeshStandardMaterial({
+          color: 0x283548,
+          roughness: 0.62,
+          metalness: 0.03,
+          envMapIntensity: 0.42,
+        });
+        const ybStripeMat = new THREE.MeshStandardMaterial({
+          color: 0xc084fc,
+          roughness: 0.58,
+          metalness: 0.02,
+          envMapIntensity: 0.45,
+        });
+        const ybCoverT = 0.0055;
+        const ybStripeLocalY = YELLOW_H * (0.5 - (198 + 20) / 512); // matches y=198..238 on spine
+        const ybStripeH = YELLOW_H * (40 / 512);
+        [-1, 1].forEach((side) => {
+          const coverBoard = new THREE.Mesh(
+            new THREE.BoxGeometry(ybCoverT, YELLOW_H, YELLOW_D),
+            ybCoverMat
+          );
+          coverBoard.position.set(side * (YELLOW_W / 2 - ybCoverT / 2), 0, 0);
+          coverBoard.castShadow = true;
+          coverBoard.receiveShadow = true;
+          yellowBookGroup.add(coverBoard);
+
+          const sideStripe = new THREE.Mesh(
+            new THREE.BoxGeometry(0.001, ybStripeH, YELLOW_D - 0.004),
+            ybStripeMat
+          );
+          sideStripe.position.set(side * (YELLOW_W / 2 + 0.0002), ybStripeLocalY, 0);
+          yellowBookGroup.add(sideStripe);
+        });
+
+        // Cream parchment page block inside covers
+        const ybPageBlock = new THREE.Mesh(
+          new THREE.BoxGeometry(YELLOW_W - ybCoverT * 2 - 0.001, YELLOW_H - 0.010, YELLOW_D - 0.008),
+          new THREE.MeshStandardMaterial({
+            map: pageBlockTex,
+            roughness: 0.88,
+            metalness: 0.0,
+            envMapIntensity: 0.25,
+          })
+        );
+        ybPageBlock.position.set(0, 0, -0.003);
+        ybPageBlock.castShadow = true;
+        ybPageBlock.receiveShadow = true;
+        yellowBookGroup.add(ybPageBlock);
+
+        // Rear mechanical mounting collar/socket on the back edge where it slides onto the control lever
+        const socketLocalY = LEVER_PIVOT_Y - YELLOW_H / 2;
+        const ybSocketCollar = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.021, 0.021, 0.010, 16),
+          leverSteelMat
+        );
+        ybSocketCollar.rotation.x = Math.PI / 2;
+        ybSocketCollar.position.set(0, socketLocalY, -YELLOW_D / 2 - 0.002);
+        yellowBookGroup.add(ybSocketCollar);
+
+        const ybSocketHole = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.012, 0.012, 0.012, 14),
+          leverGripMat
+        );
+        ybSocketHole.rotation.x = Math.PI / 2;
+        ybSocketHole.position.set(0, socketLocalY, -YELLOW_D / 2 - 0.002);
+        yellowBookGroup.add(ybSocketHole);
+
+        const ybHitbox = new THREE.Mesh(
+          new THREE.BoxGeometry(YELLOW_W + 0.014, YELLOW_H + 0.014, YELLOW_D + 0.022),
+          new THREE.MeshBasicMaterial({ visible: false })
+        );
+        ybHitbox.name = 'yellow-secret-book-hitbox';
+        yellowBookGroup.add(ybHitbox);
+
+        yellowBookGroupRef.current = yellowBookGroup;
+        yellowBookHitboxRef.current = ybHitbox;
+        recessedBookcaseGroup.add(yellowBookGroup);
+
+        coloredRoomGroup.add(recessedBookcaseGroup);
+
+        // Soft warm accent light illuminating the recessed light-blue bookcase & vintage spines
+        const bookcaseFillLight = new THREE.PointLight(0xfff4e6, 0.40, 3.8, 1.18);
+        bookcaseFillLight.position.set(-4.35, 1.75, BK_CENTER_Z);
+        coloredRoomGroup.add(bookcaseFillLight);
+
+        // --- 5B-SECRET. AHRI'S SECRET ARCHIVE & LOUNGE (牆壁後面新增一個空間：7×7米，與此房間同一底層邏輯) ---
+        const PASSAGE_DEPTH = 0.35; // Shared partition wall thickness between Pink Room (X = -5.0) and Secret Room (X = -5.35)
+        const SEC_MIN_X = -12.35;
+        const SEC_MAX_X = -5.35;
+        const SEC_W = SEC_MAX_X - SEC_MIN_X; // 7.0m wide
+        const SEC_D = PR_SIZE;                // 7.0m deep
+        const SEC_CENTER_X = (SEC_MIN_X + SEC_MAX_X) / 2; // -8.85m
+        const SEC_H = PR_HEIGHT;              // 3.0m
+
+        const secretRoomGroup = new THREE.Group();
+
+        // 1. Secret Room Floor (7.0m × 7.0m) - Vintage Rich Walnut Herringbone Hardwood
+        const secFloorCanvas = document.createElement('canvas');
+        secFloorCanvas.width = 512;
+        secFloorCanvas.height = 512;
+        const secFloorCtx = secFloorCanvas.getContext('2d');
+        if (secFloorCtx) {
+          secFloorCtx.fillStyle = '#2f2017';
+          secFloorCtx.fillRect(0, 0, 512, 512);
+          for (let y = 0; y < 512; y += 32) {
+            for (let x = 0; x < 512; x += 64) {
+              const alt = (x / 64 + y / 32) % 2 === 0;
+              secFloorCtx.fillStyle = alt ? 'rgba(68, 48, 35, 0.35)' : 'rgba(38, 24, 16, 0.45)';
+              secFloorCtx.fillRect(x, y, 62, 30);
+              secFloorCtx.strokeStyle = 'rgba(18, 11, 7, 0.55)';
+              secFloorCtx.lineWidth = 1.5;
+              secFloorCtx.strokeRect(x, y, 62, 30);
+            }
+          }
+        }
+        const secFloorTex = new THREE.CanvasTexture(secFloorCanvas);
+        secFloorTex.colorSpace = THREE.SRGBColorSpace;
+        secFloorTex.wrapS = THREE.RepeatWrapping;
+        secFloorTex.wrapT = THREE.RepeatWrapping;
+        secFloorTex.repeat.set(3.5, 3.5);
+        secFloorTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        extraRoomTexturesToDispose.push(secFloorTex);
+
+        const secFloor = new THREE.Mesh(
+          new THREE.PlaneGeometry(SEC_W, SEC_D),
+          new THREE.MeshStandardMaterial({
+            map: secFloorTex,
+            roughness: 0.54,
+            metalness: 0.03,
+            envMapIntensity: 0.42,
+          })
+        );
+        secFloor.rotation.x = -Math.PI / 2;
+        secFloor.position.set(SEC_CENTER_X, 0, 0);
+        secFloor.receiveShadow = true;
+        secretRoomGroup.add(secFloor);
+
+        // 2. Secret Room Ceiling (7.0m × 7.0m) + Exposed Timber Beams
+        const secCeiling = new THREE.Mesh(
+          new THREE.PlaneGeometry(SEC_W, SEC_D),
+          new THREE.MeshStandardMaterial({ color: 0x221a15, roughness: 0.94, metalness: 0.0 })
+        );
+        secCeiling.rotation.x = Math.PI / 2;
+        secCeiling.position.set(SEC_CENTER_X, SEC_H, 0);
+        secretRoomGroup.add(secCeiling);
+
+        const beamMat = new THREE.MeshStandardMaterial({ color: 0x3d271a, roughness: 0.72 });
+        [-2.4, -0.8, 0.8, 2.4].forEach((bz) => {
+          const beam = new THREE.Mesh(new THREE.BoxGeometry(SEC_W, 0.16, 0.16), beamMat);
+          beam.position.set(SEC_CENTER_X, SEC_H - 0.08, bz);
+          beam.castShadow = true;
+          secretRoomGroup.add(beam);
+        });
+
+        // 3. Secret Room Outer Walls
+        const secWallMat = new THREE.MeshStandardMaterial({
+          color: 0x24323e, // Deep midnight Victorian slate
+          roughness: 0.88,
+          metalness: 0.02,
+          envMapIntensity: 0.25,
+        });
+
+        // Far Outer Wall (X = -12.35)
+        const secFarWall = new THREE.Mesh(new THREE.PlaneGeometry(SEC_D, SEC_H), secWallMat);
+        secFarWall.position.set(SEC_MIN_X, SEC_H / 2, 0);
+        secFarWall.rotation.y = Math.PI / 2;
+        secFarWall.receiveShadow = true;
+        secretRoomGroup.add(secFarWall);
+
+        // Secret Front Wall (Z = -3.50)
+        const secFrontWall = new THREE.Mesh(new THREE.PlaneGeometry(SEC_W, SEC_H), secWallMat);
+        secFrontWall.position.set(SEC_CENTER_X, SEC_H / 2, -SEC_D / 2);
+        secFrontWall.receiveShadow = true;
+        secretRoomGroup.add(secFrontWall);
+
+        // Secret Back Wall (Z = +3.50)
+        const secBackWall = new THREE.Mesh(new THREE.PlaneGeometry(SEC_W, SEC_H), secWallMat);
+        secBackWall.position.set(SEC_CENTER_X, SEC_H / 2, SEC_D / 2);
+        secBackWall.rotation.y = Math.PI;
+        secBackWall.receiveShadow = true;
+        secretRoomGroup.add(secBackWall);
+
+        // Dividing Partition Wall (X = -5.35, viewed from inside secret room looking +X towards doorway)
+        const secPartFrontLen = PINK_BK_Z_MIN - -PR_SIZE / 2; // 1.30m
+        const secPartRearLen = PR_SIZE / 2 - PINK_BK_Z_MAX;   // 4.10m
+        const secDoorwayW = PINK_BK_Z_MAX - PINK_BK_Z_MIN;    // 1.60m
+        const secHeaderH = PR_HEIGHT - PINK_BK_Y_MAX;         // 0.60m
+
+        const secPartitionFront = new THREE.Mesh(
+          new THREE.PlaneGeometry(secPartFrontLen, PR_HEIGHT),
+          secWallMat
+        );
+        secPartitionFront.position.set(SEC_MAX_X, PR_HEIGHT / 2, (-PR_SIZE / 2 + PINK_BK_Z_MIN) / 2);
+        secPartitionFront.rotation.y = -Math.PI / 2;
+        secPartitionFront.receiveShadow = true;
+        secretRoomGroup.add(secPartitionFront);
+
+        const secPartitionRear = new THREE.Mesh(
+          new THREE.PlaneGeometry(secPartRearLen, PR_HEIGHT),
+          secWallMat
+        );
+        secPartitionRear.position.set(SEC_MAX_X, PR_HEIGHT / 2, (PINK_BK_Z_MAX + PR_SIZE / 2) / 2);
+        secPartitionRear.rotation.y = -Math.PI / 2;
+        secPartitionRear.receiveShadow = true;
+        secretRoomGroup.add(secPartitionRear);
+
+        const secPartitionHeader = new THREE.Mesh(
+          new THREE.PlaneGeometry(secDoorwayW, secHeaderH),
+          secWallMat
+        );
+        secPartitionHeader.position.set(SEC_MAX_X, PINK_BK_Y_MAX + secHeaderH / 2, (PINK_BK_Z_MIN + PINK_BK_Z_MAX) / 2);
+        secPartitionHeader.rotation.y = -Math.PI / 2;
+        secPartitionHeader.receiveShadow = true;
+        secretRoomGroup.add(secPartitionHeader);
+
+        // Doorway Passage Jambs & Architrave Trim (connecting X = -5.0 to X = -5.35)
+        const passageTrimMat = new THREE.MeshStandardMaterial({
+          color: 0x3d271a,
+          roughness: 0.48,
+          polygonOffset: true,
+          polygonOffsetFactor: -1,
+          polygonOffsetUnits: -1,
+        });
+
+        const leftJamb = new THREE.Mesh(
+          new THREE.BoxGeometry(PASSAGE_DEPTH, PINK_BK_Y_MAX, 0.04),
+          passageTrimMat
+        );
+        leftJamb.position.set(-5.0 - PASSAGE_DEPTH / 2, PINK_BK_Y_MAX / 2, PINK_BK_Z_MIN);
+        secretRoomGroup.add(leftJamb);
+
+        const rightJamb = new THREE.Mesh(
+          new THREE.BoxGeometry(PASSAGE_DEPTH, PINK_BK_Y_MAX, 0.04),
+          passageTrimMat
+        );
+        rightJamb.position.set(-5.0 - PASSAGE_DEPTH / 2, PINK_BK_Y_MAX / 2, PINK_BK_Z_MAX);
+        secretRoomGroup.add(rightJamb);
+
+        const headerSoffit = new THREE.Mesh(
+          new THREE.BoxGeometry(PASSAGE_DEPTH, 0.04, BK_W),
+          passageTrimMat
+        );
+        headerSoffit.position.set(-5.0 - PASSAGE_DEPTH / 2, PINK_BK_Y_MAX, BK_CENTER_Z);
+        secretRoomGroup.add(headerSoffit);
+
+        const thresholdPlate = new THREE.Mesh(
+          new THREE.BoxGeometry(PASSAGE_DEPTH + 0.02, 0.012, BK_W + 0.02),
+          new THREE.MeshStandardMaterial({ color: 0x5a4232, roughness: 0.52 })
+        );
+        thresholdPlate.position.set(-5.0 - PASSAGE_DEPTH / 2, 0.006, BK_CENTER_Z);
+        secretRoomGroup.add(thresholdPlate);
+
+        // Invisible walk-through doorway hitbox (click doorway when sunken to walk between rooms)
+        const passageWalkHitbox = new THREE.Mesh(
+          new THREE.BoxGeometry(PASSAGE_DEPTH + 0.36, 2.30, BK_W * 0.92),
+          new THREE.MeshBasicMaterial({ visible: false })
+        );
+        passageWalkHitbox.position.set(-5.0 - PASSAGE_DEPTH / 2, 1.15, BK_CENTER_Z);
+        passageWalkHitbox.name = 'secret-passage-walk-hitbox';
+        secretRoomGroup.add(passageWalkHitbox);
+        secretPassageHitboxRef.current = passageWalkHitbox;
+
+        // Invisible secret room space entry hitbox (tapping inside secret room visible space from Pink room to enter)
+        const secSpaceHitbox = new THREE.Mesh(
+          new THREE.BoxGeometry(3.0, 2.30, BK_W + 1.2),
+          new THREE.MeshBasicMaterial({ visible: false })
+        );
+        secSpaceHitbox.position.set(-6.90, 1.15, BK_CENTER_Z);
+        secSpaceHitbox.name = 'secret-room-space-entry-hitbox';
+        secretRoomGroup.add(secSpaceHitbox);
+        secretRoomSpaceHitboxRef.current = secSpaceHitbox;
+
+        // True Hollow Floor Elevator Sinking Pit beneath doorway (no clipping solid box)
+        const pitMat = new THREE.MeshStandardMaterial({ color: 0x161c22, roughness: 0.82, metalness: 0.45 });
+        const PIT_DEPTH = 2.65;
+        const pitShaftGroup = new THREE.Group();
+
+        // North pit wall (Z = PINK_BK_Z_MIN, facing +Z into pit)
+        const pitNorth = new THREE.Mesh(new THREE.PlaneGeometry(PASSAGE_DEPTH, PIT_DEPTH), pitMat);
+        pitNorth.position.set(-5.0 - PASSAGE_DEPTH / 2, -PIT_DEPTH / 2, PINK_BK_Z_MIN);
+        pitShaftGroup.add(pitNorth);
+
+        // South pit wall (Z = PINK_BK_Z_MAX, facing -Z into pit)
+        const pitSouth = new THREE.Mesh(new THREE.PlaneGeometry(PASSAGE_DEPTH, PIT_DEPTH), pitMat);
+        pitSouth.position.set(-5.0 - PASSAGE_DEPTH / 2, -PIT_DEPTH / 2, PINK_BK_Z_MAX);
+        pitSouth.rotation.y = Math.PI;
+        pitShaftGroup.add(pitSouth);
+
+        // East pit wall (X = -5.0, facing -X into pit)
+        const pitEast = new THREE.Mesh(new THREE.PlaneGeometry(BK_W, PIT_DEPTH), pitMat);
+        pitEast.position.set(-5.0, -PIT_DEPTH / 2, BK_CENTER_Z);
+        pitEast.rotation.y = -Math.PI / 2;
+        pitShaftGroup.add(pitEast);
+
+        // West pit wall (X = -5.35, facing +X into pit)
+        const pitWest = new THREE.Mesh(new THREE.PlaneGeometry(BK_W, PIT_DEPTH), pitMat);
+        pitWest.position.set(SEC_MAX_X, -PIT_DEPTH / 2, BK_CENTER_Z);
+        pitWest.rotation.y = Math.PI / 2;
+        pitShaftGroup.add(pitWest);
+
+        // Bottom pit floor (Y = -PIT_DEPTH, facing +Y up)
+        const pitFloor = new THREE.Mesh(new THREE.PlaneGeometry(PASSAGE_DEPTH, BK_W), pitMat);
+        pitFloor.position.set(-5.0 - PASSAGE_DEPTH / 2, -PIT_DEPTH, BK_CENTER_Z);
+        pitFloor.rotation.x = -Math.PI / 2;
+        pitShaftGroup.add(pitFloor);
+
+        // Vertical steel guide rails inside pit
+        const pitRailMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.35, metalness: 0.85 });
+        [-1, 1].forEach((side) => {
+          const rail = new THREE.Mesh(new THREE.BoxGeometry(0.025, PIT_DEPTH, 0.04), pitRailMat);
+          rail.position.set(-5.0 - PASSAGE_DEPTH / 2, -PIT_DEPTH / 2, BK_CENTER_Z + side * (BK_W / 2 - 0.03));
+          pitShaftGroup.add(rail);
+        });
+        secretRoomGroup.add(pitShaftGroup);
+
+        // 4. Secret Room Interior Door Control Lever (mounted flush on partition wall inside secret room)
+        const secInsideLeverGroup = new THREE.Group();
+        secInsideLeverGroup.position.set(SEC_MAX_X, 1.25, PINK_BK_Z_MIN - 0.22);
+        secInsideLeverGroup.rotation.y = -Math.PI / 2;
+
+        const secLeverPlate = new THREE.Mesh(
+          new THREE.BoxGeometry(0.08, 0.16, 0.014),
+          leverSteelMat
+        );
+        secInsideLeverGroup.add(secLeverPlate);
+
+        const secInsidePivotGroup = new THREE.Group();
+        secInsidePivotGroup.position.set(0, 0, 0.018);
+
+        const secLeverArm = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.007, 0.009, 0.14, 12),
+          leverBrassMat
+        );
+        secLeverArm.position.set(0, 0.07, 0);
+        secInsidePivotGroup.add(secLeverArm);
+
+        const secLeverKnob = new THREE.Mesh(
+          new THREE.SphereGeometry(0.016, 16, 12),
+          leverKnobMat
+        );
+        secLeverKnob.position.set(0, 0.14, 0);
+        secInsidePivotGroup.add(secLeverKnob);
+
+        const secLeverHitbox = new THREE.Mesh(
+          new THREE.BoxGeometry(0.12, 0.24, 0.12),
+          new THREE.MeshBasicMaterial({ visible: false })
+        );
+        secLeverHitbox.name = 'secret-inside-lever-hitbox';
+        secInsidePivotGroup.add(secLeverHitbox);
+
+        secInsideLeverGroup.add(secInsidePivotGroup);
+        secretInsideLeverPivotRef.current = secInsidePivotGroup;
+        secretInsideLeverHitboxRef.current = secLeverHitbox;
+        secretRoomGroup.add(secInsideLeverGroup);
+
+        // 5. Secret Room Luxury Furnishings
+        // 5A. Ornate Vintage Medallion Persian Rug (3.6m × 2.6m)
+        const rugCanvas = document.createElement('canvas');
+        rugCanvas.width = 512;
+        rugCanvas.height = 384;
+        const rCtx = rugCanvas.getContext('2d');
+        if (rCtx) {
+          rCtx.fillStyle = '#6b1d1d';
+          rCtx.fillRect(0, 0, 512, 384);
+          rCtx.strokeStyle = '#d4af37';
+          rCtx.lineWidth = 14;
+          rCtx.strokeRect(18, 18, 476, 348);
+          rCtx.strokeStyle = '#1a334d';
+          rCtx.lineWidth = 8;
+          rCtx.strokeRect(32, 32, 448, 320);
+
+          // Central ornate medallion
+          rCtx.fillStyle = '#1a334d';
+          rCtx.beginPath();
+          rCtx.ellipse(256, 192, 95, 68, 0, 0, Math.PI * 2);
+          rCtx.fill();
+          rCtx.strokeStyle = '#d4af37';
+          rCtx.lineWidth = 4;
+          rCtx.stroke();
+
+          rCtx.fillStyle = '#e8d8b0';
+          rCtx.beginPath();
+          rCtx.ellipse(256, 192, 48, 34, 0, 0, Math.PI * 2);
+          rCtx.fill();
+        }
+        const secRugTex = new THREE.CanvasTexture(rugCanvas);
+        secRugTex.colorSpace = THREE.SRGBColorSpace;
+        extraRoomTexturesToDispose.push(secRugTex);
+
+        const secRug = new THREE.Mesh(
+          new THREE.PlaneGeometry(3.6, 2.6),
+          new THREE.MeshStandardMaterial({ map: secRugTex, roughness: 0.92 })
+        );
+        secRug.rotation.x = -Math.PI / 2;
+        secRug.position.set(-8.85, 0.008, 0.60);
+        secRug.receiveShadow = true;
+        secretRoomGroup.add(secRug);
+
+        // 5B. Deep Burgundy Chesterfield Tufted Leather Sofa (at X = -8.85, Z = 1.65, facing -Z)
+        const chesterGroup = new THREE.Group();
+        chesterGroup.position.set(-8.85, 0, 1.65);
+
+        const sofaLeatherMat = new THREE.MeshStandardMaterial({
+          color: 0x541818, // Deep antique oxblood burgundy
+          roughness: 0.42,
+          metalness: 0.08,
+          envMapIntensity: 0.65,
+        });
+        const sofaWoodMat = new THREE.MeshStandardMaterial({ color: 0x2a170d, roughness: 0.55 });
+
+        // Sofa Base & Seat Cushion Slab
+        const sofaBase = new THREE.Mesh(new THREE.BoxGeometry(2.30, 0.22, 0.92), sofaLeatherMat);
+        sofaBase.position.y = 0.20;
+        sofaBase.castShadow = true;
+        chesterGroup.add(sofaBase);
+
+        // 3 Plump Seat Cushions
+        [-0.68, 0, 0.68].forEach((cx) => {
+          const cushion = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.12, 0.72), sofaLeatherMat);
+          cushion.position.set(cx, 0.37, -0.04);
+          cushion.castShadow = true;
+          chesterGroup.add(cushion);
+        });
+
+        // Tufted Backrest with Rolled Crown
+        const sofaBack = new THREE.Mesh(new THREE.BoxGeometry(2.30, 0.52, 0.24), sofaLeatherMat);
+        sofaBack.position.set(0, 0.58, 0.36);
+        sofaBack.castShadow = true;
+        chesterGroup.add(sofaBack);
+
+        const rolledBackTop = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 2.30, 16), sofaLeatherMat);
+        rolledBackTop.rotation.z = Math.PI / 2;
+        rolledBackTop.position.set(0, 0.84, 0.36);
+        rolledBackTop.castShadow = true;
+        chesterGroup.add(rolledBackTop);
+
+        // Rolled Scroll Armrests
+        [-1.12, 1.12].forEach((ax) => {
+          const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.94, 16), sofaLeatherMat);
+          arm.rotation.x = Math.PI / 2;
+          arm.position.set(ax, 0.56, 0.02);
+          arm.castShadow = true;
+          chesterGroup.add(arm);
+        });
+
+        // Turned Wooden Bun Feet
+        [
+          [-1.05, -0.38],
+          [1.05, -0.38],
+          [-1.05, 0.38],
+          [1.05, 0.38],
+        ].forEach(([fx, fz]) => {
+          const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.030, 0.09, 12), sofaWoodMat);
+          foot.position.set(fx, 0.045, fz);
+          foot.castShadow = true;
+          chesterGroup.add(foot);
+        });
+
+        // 2 Cozy Velvet Throw Pillows
+        const pillowMat = new THREE.MeshStandardMaterial({ color: 0x8a6b2d, roughness: 0.85 });
+        [-0.82, 0.82].forEach((px) => {
+          const pillow = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.32, 0.12), pillowMat);
+          pillow.position.set(px, 0.50, 0.16);
+          pillow.rotation.y = px > 0 ? -0.35 : 0.35;
+          pillow.castShadow = true;
+          chesterGroup.add(pillow);
+        });
+
+        secretRoomGroup.add(chesterGroup);
+
+        // 5C. Carved Dark-Walnut Coffee Table with Open Grimoire & Glowing Candle
+        const secTableGroup = new THREE.Group();
+        secTableGroup.position.set(-8.85, 0, 0.62);
+
+        const tableTop = new THREE.Mesh(
+          new THREE.BoxGeometry(1.35, 0.045, 0.72),
+          beamMat
+        );
+        tableTop.position.y = 0.40;
+        tableTop.castShadow = true;
+        tableTop.receiveShadow = true;
+        secTableGroup.add(tableTop);
+
+        [-0.58, 0.58].forEach((tx) => {
+          [-0.28, 0.28].forEach((tz) => {
+            const tLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.022, 0.40, 10), beamMat);
+            tLeg.position.set(tx, 0.20, tz);
+            tLeg.castShadow = true;
+            secTableGroup.add(tLeg);
+          });
+        });
+
+        // Open Leather Grimoire on Coffee Table
+        const bookMat = new THREE.MeshStandardMaterial({ color: 0x4a2a1b, roughness: 0.65 });
+        const pageMat = new THREE.MeshStandardMaterial({ color: 0xf1e7d0, roughness: 0.82 });
+        const openBookLeft = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.016, 0.24), pageMat);
+        openBookLeft.position.set(-0.16, 0.435, 0.02);
+        openBookLeft.rotation.z = -0.08;
+        secTableGroup.add(openBookLeft);
+
+        const openBookRight = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.016, 0.24), pageMat);
+        openBookRight.position.set(0.01, 0.435, 0.02);
+        openBookRight.rotation.z = 0.08;
+        secTableGroup.add(openBookRight);
+
+        // Brass Candlestick + Flickering Candle Flame
+        const candleStick = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.016, 0.038, 0.12, 12),
+          leverBrassMat
+        );
+        candleStick.position.set(0.32, 0.48, -0.12);
+        candleStick.castShadow = true;
+        secTableGroup.add(candleStick);
+
+        const candleWax = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.010, 0.010, 0.08, 10),
+          new THREE.MeshStandardMaterial({ color: 0xfffcf0, roughness: 0.35 })
+        );
+        candleWax.position.set(0.32, 0.58, -0.12);
+        secTableGroup.add(candleWax);
+
+        const candleFlame = new THREE.Mesh(
+          new THREE.SphereGeometry(0.008, 8, 8),
+          new THREE.MeshBasicMaterial({ color: 0xffb74d })
+        );
+        candleFlame.position.set(0.32, 0.63, -0.12);
+        secTableGroup.add(candleFlame);
+
+        const candleLight = new THREE.PointLight(0xffb042, 0.65, 3.2, 1.25);
+        candleLight.position.set(0.32, 0.66, -0.12);
+        secTableGroup.add(candleLight);
+
+        secretRoomGroup.add(secTableGroup);
+
+        // 5D. Twin Tufted Club Armchairs Flanking the Rug
+        [-1, 1].forEach((side) => {
+          const armChair = new THREE.Group();
+          armChair.position.set(-8.85 + side * 1.85, 0, 0.65);
+          armChair.rotation.y = -side * (Math.PI / 2 + 0.22);
+
+          const cBase = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.20, 0.82), sofaLeatherMat);
+          cBase.position.y = 0.18;
+          cBase.castShadow = true;
+          armChair.add(cBase);
+
+          const cSeat = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.11, 0.68), sofaLeatherMat);
+          cSeat.position.set(0, 0.34, 0.02);
+          cSeat.castShadow = true;
+          armChair.add(cSeat);
+
+          const cBack = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.58, 0.18), sofaLeatherMat);
+          cBack.position.set(0, 0.58, 0.34);
+          cBack.castShadow = true;
+          armChair.add(cBack);
+
+          [-0.37, 0.37].forEach((ax) => {
+            const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.82, 14), sofaLeatherMat);
+            arm.rotation.x = Math.PI / 2;
+            arm.position.set(ax, 0.52, 0);
+            arm.castShadow = true;
+            armChair.add(arm);
+          });
+
+          secretRoomGroup.add(armChair);
+        });
+
+        // 5E. Antique Executive Roll-Top Desk & Study Station (against front wall Z = -3.50)
+        const secDeskGroup = new THREE.Group();
+        secDeskGroup.position.set(-8.95, 0, -2.85);
+
+        const deskWoodMat = new THREE.MeshStandardMaterial({
+          color: 0x3a2216,
+          roughness: 0.44,
+          metalness: 0.03,
+          envMapIntensity: 0.52,
+        });
+
+        const dTop = new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.05, 0.90), deskWoodMat);
+        dTop.position.y = 0.74;
+        dTop.castShadow = true;
+        secDeskGroup.add(dTop);
+
+        // Left & Right Drawer Pedestals
+        [-0.72, 0.72].forEach((px) => {
+          const ped = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.71, 0.84), deskWoodMat);
+          ped.position.set(px, 0.36, 0);
+          ped.castShadow = true;
+          secDeskGroup.add(ped);
+        });
+
+        // Desk Hutch & Cubbies
+        const hutch = new THREE.Mesh(new THREE.BoxGeometry(1.92, 0.36, 0.28), deskWoodMat);
+        hutch.position.set(0, 0.94, -0.30);
+        hutch.castShadow = true;
+        secDeskGroup.add(hutch);
+
+        // Banker's Lamp with Emerald Translucent Shade & Warm Reading Glow
+        const bankerMat = new THREE.MeshPhysicalMaterial({
+          color: 0x1b7036,
+          roughness: 0.20,
+          metalness: 0.05,
+          transmission: 0.35,
+          clearcoat: 0.85,
+        });
+        const lampBase = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.075, 0.024, 16), leverBrassMat);
+        lampBase.position.set(-0.52, 0.78, -0.15);
+        secDeskGroup.add(lampBase);
+
+        const lampStem = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.22, 12), leverBrassMat);
+        lampStem.position.set(-0.52, 0.89, -0.15);
+        secDeskGroup.add(lampStem);
+
+        const lampShade = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.18, 16, 1, false, 0, Math.PI), bankerMat);
+        lampShade.rotation.z = Math.PI / 2;
+        lampShade.position.set(-0.52, 1.00, -0.15);
+        lampShade.castShadow = true;
+        secDeskGroup.add(lampShade);
+
+        const bankerLight = new THREE.PointLight(0xd4fcd7, 0.85, 3.8, 1.25);
+        bankerLight.position.set(-0.52, 0.95, -0.12);
+        secDeskGroup.add(bankerLight);
+
+        // Brass Armillary Sphere on Desk
+        const armillaryBase = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 0.03, 12), leverBrassMat);
+        armillaryBase.position.set(0.62, 0.78, -0.18);
+        secDeskGroup.add(armillaryBase);
+
+        const armRing1 = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.006, 8, 24), leverBrassMat);
+        armRing1.position.set(0.62, 0.90, -0.18);
+        armRing1.rotation.x = 0.45;
+        secDeskGroup.add(armRing1);
+
+        const armRing2 = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.005, 8, 24), leverBrassMat);
+        armRing2.position.set(0.62, 0.90, -0.18);
+        armRing2.rotation.y = 0.65;
+        secDeskGroup.add(armRing2);
+
+        // Swivel Leather Study Chair
+        const studyChair = new THREE.Group();
+        studyChair.position.set(0, 0, 0.65);
+        const sSeat = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.09, 0.52), sofaLeatherMat);
+        sSeat.position.y = 0.44;
+        studyChair.add(sSeat);
+        const sBack = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.58, 0.08), sofaLeatherMat);
+        sBack.position.set(0, 0.74, 0.22);
+        studyChair.add(sBack);
+        const sPost = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.026, 0.42, 12), leverBrassMat);
+        sPost.position.y = 0.21;
+        studyChair.add(sPost);
+        secDeskGroup.add(studyChair);
+
+        secretRoomGroup.add(secDeskGroup);
+
+        // 5F. Grand Archival Library Bookcases (along far left wall X = -12.35)
+        const libGroup = new THREE.Group();
+        libGroup.position.set(-12.13, 0, 0);
+        libGroup.rotation.y = Math.PI / 2;
+
+        const libWoodMat = new THREE.MeshStandardMaterial({ color: 0x2e1a10, roughness: 0.50 });
+        const libBack = new THREE.Mesh(new THREE.BoxGeometry(4.80, 2.70, 0.03), libWoodMat);
+        libBack.position.y = 1.35;
+        libGroup.add(libBack);
+
+        // Vertical Mullions & Outer Frame
+        [-2.40, -0.80, 0.80, 2.40].forEach((mx) => {
+          const mullion = new THREE.Mesh(new THREE.BoxGeometry(0.06, 2.70, 0.44), libWoodMat);
+          mullion.position.set(mx, 1.35, 0.22);
+          mullion.castShadow = true;
+          libGroup.add(mullion);
+        });
+
+        // 5 Shelf Tiers across the 3 bays
+        for (let sh = 0; sh <= 5; sh++) {
+          const sy = 0.12 + sh * 0.48;
+          const shelfMesh = new THREE.Mesh(new THREE.BoxGeometry(4.74, 0.035, 0.42), libWoodMat);
+          shelfMesh.position.set(0, sy, 0.21);
+          libGroup.add(shelfMesh);
+        }
+
+        // Shelf Accents: Glowing Amethyst Geodes on middle shelf
+        const geodeMat = new THREE.MeshPhysicalMaterial({
+          color: 0x9333ea,
+          emissive: 0x7e22ce,
+          emissiveIntensity: 0.75,
+          roughness: 0.18,
+          clearcoat: 0.90,
+        });
+        const geodeMesh = new THREE.Mesh(new THREE.DodecahedronGeometry(0.11, 1), geodeMat);
+        geodeMesh.position.set(0, 1.20, 0.25);
+        geodeMesh.rotation.set(0.4, 0.6, 0.2);
+        libGroup.add(geodeMesh);
+
+        const geodeLight = new THREE.PointLight(0xa855f7, 0.85, 3.2, 1.3);
+        geodeLight.position.set(0, 1.26, 0.28);
+        libGroup.add(geodeLight);
+
+        // Brass Astronomical Telescope on Tripod Stand
+        const teleGroup = new THREE.Group();
+        teleGroup.position.set(2.05, 0, 0.85);
+        const teleBase = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 1.20, 10), leverBrassMat);
+        teleBase.position.y = 0.60;
+        teleGroup.add(teleBase);
+        const teleTube = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.032, 0.95, 16), leverBrassMat);
+        teleTube.rotation.z = Math.PI / 4;
+        teleTube.position.set(0.12, 1.28, 0);
+        teleGroup.add(teleTube);
+        libGroup.add(teleGroup);
+
+        secretRoomGroup.add(libGroup);
+
+        // 5G. Central Caged Chandelier Illuminating the Secret Room
+        const chandelierGroup = new THREE.Group();
+        chandelierGroup.position.set(-8.85, 2.50, 0.20);
+
+        const chanChain = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.45, 8), leverSteelMat);
+        chanChain.position.y = 0.22;
+        chandelierGroup.add(chanChain);
+
+        const chanRing = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.018, 8, 24), leverBrassMat);
+        chanRing.rotation.x = Math.PI / 2;
+        chandelierGroup.add(chanRing);
+
+        for (let b = 0; b < 6; b++) {
+          const bAng = (b / 6) * Math.PI * 2;
+          const bulb = new THREE.Mesh(
+            new THREE.SphereGeometry(0.024, 10, 10),
+            new THREE.MeshBasicMaterial({ color: 0xffe6a3 })
+          );
+          bulb.position.set(Math.cos(bAng) * 0.42, 0.03, Math.sin(bAng) * 0.42);
+          chandelierGroup.add(bulb);
+        }
+
+        const chanMainLight = new THREE.PointLight(0xffecd2, 1.35, 10.5, 1.15);
+        chanMainLight.position.set(0, -0.05, 0);
+        chanMainLight.castShadow = true;
+        chandelierGroup.add(chanMainLight);
+
+        secretRoomGroup.add(chandelierGroup);
+
+        coloredRoomGroup.add(secretRoomGroup);
 
         // White Gaming Chair (Rounded & Plush) with 6 Caster Wheels + Light-Blue Neck & Lumbar Pillows beside the Desk
         const gamingChairGroup = new THREE.Group();
@@ -9523,11 +11295,16 @@ export const Room3DScene: React.FC = () => {
 
             podGroup.add(capsulePhotoFrameGroup);
 
-            // Jewel-Case CD on Inner Shelf slightly right of Photo Frame facing forward (90 deg)
-            const capsuleCdGroup = createCdDisplayGroup('/assets/cd_su_utsukushiku_front.webp', 1.15);
-            capsuleCdGroup.position.set(-0.482, SHELF_TOP_Y, 1.085);
+            // Two Jewel-Case CDs on Inner Shelf beside Photo Frame, rotated 90 degrees facing into the capsule pod
+            const capsuleCdGroup = createCdDisplayGroup('/assets/cd_su_utsukushiku_front.webp', 0.90);
+            capsuleCdGroup.position.set(-0.482, SHELF_TOP_Y, 1.115);
             capsuleCdGroup.rotation.y = Math.PI / 2;
             podGroup.add(capsuleCdGroup);
+
+            const capsuleIdolCdGroup = createCdDisplayGroup('/assets/cd_su_idol_front.webp', 0.90);
+            capsuleIdolCdGroup.position.set(-0.482, SHELF_TOP_Y, 0.955);
+            capsuleIdolCdGroup.rotation.y = Math.PI / 2;
+            podGroup.add(capsuleIdolCdGroup);
 
             // 2. Uchiwa Support Fan mounted on Interior Capsule Side Wall near Doorway (膠囊艙內稍微靠門口側牆面的推扇)
             uchiwaFanGroup.scale.setScalar(1.16);
@@ -11478,6 +13255,155 @@ export const Room3DScene: React.FC = () => {
         greenCurtainGroup.add(screenMesh);
 
         coloredRoomGroup.add(greenCurtainGroup);
+
+        // Twin Side-Wall Display Cabinets: each side has three 6-tier cabinets of widths 2.3m, 2.0m, and 1.5m
+        const G_CAB_HEIGHT = 2.16;
+        const G_CAB_DEPTH = 0.44;
+        const G_PLINTH_H = 0.08;
+        const G_CROWN_H = 0.06;
+        const G_SIDE_THICK = 0.036;
+        const G_SHELF_THICK = 0.032;
+        const G_DIVIDER_THICK = 0.032;
+        const G_CAB_GAP = 0.08;
+        const G_CAB_WIDTHS: readonly number[] = [2.3, 2.0, 1.5];
+
+        const createGreenSideCabinet = (cabWidth: number) => {
+          const cab = new THREE.Group();
+          const bodyHeight = G_CAB_HEIGHT - G_PLINTH_H - G_CROWN_H;
+          const innerSpanW = cabWidth - G_SIDE_THICK * 2;
+          const tierPitch = (bodyHeight - G_SHELF_THICK) / 6;
+
+          // 1. Grounded Plinth Base + Front Kickplate Trim
+          const plinthCore = new THREE.Mesh(
+            new THREE.BoxGeometry(cabWidth - 0.03, G_PLINTH_H, G_CAB_DEPTH - 0.03),
+            cabDarkMat
+          );
+          plinthCore.position.set(0, G_PLINTH_H / 2, -0.01);
+          plinthCore.castShadow = true;
+          plinthCore.receiveShadow = true;
+          cab.add(plinthCore);
+
+          const kickplate = new THREE.Mesh(
+            new THREE.BoxGeometry(cabWidth + 0.01, G_PLINTH_H * 0.85, 0.024),
+            tableDarkWoodMat
+          );
+          kickplate.position.set(0, (G_PLINTH_H * 0.85) / 2, G_CAB_DEPTH / 2 - 0.008);
+          cab.add(kickplate);
+
+          // 2. Left & Right Vertical Side Panels + Front Stile Molding
+          const sideGeo = new THREE.BoxGeometry(G_SIDE_THICK, bodyHeight, G_CAB_DEPTH);
+          const stileGeo = new THREE.BoxGeometry(0.044, bodyHeight, 0.014);
+
+          [-1, 1].forEach((side) => {
+            const sx = side * (cabWidth / 2 - G_SIDE_THICK / 2);
+            const sidePanel = new THREE.Mesh(sideGeo, tableMat);
+            sidePanel.position.set(sx, G_PLINTH_H + bodyHeight / 2, 0);
+            sidePanel.castShadow = true;
+            sidePanel.receiveShadow = true;
+            cab.add(sidePanel);
+
+            const frontStile = new THREE.Mesh(stileGeo, cabDarkMat);
+            frontStile.position.set(sx, G_PLINTH_H + bodyHeight / 2, G_CAB_DEPTH / 2 + 0.005);
+            frontStile.castShadow = true;
+            cab.add(frontStile);
+          });
+
+          // Center vertical divider for wide 2.3m & 2.0m cabinets
+          if (cabWidth >= 1.8) {
+            const centerDivider = new THREE.Mesh(
+              new THREE.BoxGeometry(G_DIVIDER_THICK, bodyHeight, G_CAB_DEPTH - 0.018),
+              tableMat
+            );
+            centerDivider.position.set(0, G_PLINTH_H + bodyHeight / 2, 0);
+            centerDivider.castShadow = true;
+            centerDivider.receiveShadow = true;
+            cab.add(centerDivider);
+
+            const centerStile = new THREE.Mesh(
+              new THREE.BoxGeometry(0.038, bodyHeight, 0.014),
+              cabDarkMat
+            );
+            centerStile.position.set(0, G_PLINTH_H + bodyHeight / 2, G_CAB_DEPTH / 2 + 0.005);
+            centerStile.castShadow = true;
+            cab.add(centerStile);
+          }
+
+          // 3. Recessed Deep Dark Wood Back Panel
+          const cabBack = new THREE.Mesh(
+            new THREE.BoxGeometry(innerSpanW + 0.01, bodyHeight, 0.018),
+            cabBackMat
+          );
+          cabBack.position.set(0, G_PLINTH_H + bodyHeight / 2, -G_CAB_DEPTH / 2 + 0.01);
+          cabBack.receiveShadow = true;
+          cab.add(cabBack);
+
+          // 4. Seven Horizontal Shelves Creating Six Open Tiers
+          const shelfGeo = new THREE.BoxGeometry(innerSpanW, G_SHELF_THICK, G_CAB_DEPTH - 0.02);
+          const shelfLipGeo = new THREE.BoxGeometry(innerSpanW, G_SHELF_THICK + 0.004, 0.014);
+
+          for (let i = 0; i <= 6; i++) {
+            const sy = G_PLINTH_H + G_SHELF_THICK / 2 + i * tierPitch;
+            const shelf = new THREE.Mesh(shelfGeo, tableMat);
+            shelf.position.set(0, sy, 0.004);
+            shelf.castShadow = true;
+            shelf.receiveShadow = true;
+            cab.add(shelf);
+
+            const shelfLip = new THREE.Mesh(shelfLipGeo, cabDarkMat);
+            shelfLip.position.set(0, sy, G_CAB_DEPTH / 2 - 0.003);
+            cab.add(shelfLip);
+          }
+
+          // 5. Stepped Crown Cornice Trim along Top Edge
+          const lowerCrown = new THREE.Mesh(
+            new THREE.BoxGeometry(cabWidth + 0.028, G_CROWN_H * 0.45, G_CAB_DEPTH + 0.022),
+            cabDarkMat
+          );
+          lowerCrown.position.set(0, G_CAB_HEIGHT - G_CROWN_H + (G_CROWN_H * 0.45) / 2, 0.008);
+          lowerCrown.castShadow = true;
+          cab.add(lowerCrown);
+
+          const upperCrown = new THREE.Mesh(
+            new THREE.BoxGeometry(cabWidth + 0.06, G_CROWN_H * 0.55, G_CAB_DEPTH + 0.044),
+            tableDarkWoodMat
+          );
+          upperCrown.position.set(0, G_CAB_HEIGHT - (G_CROWN_H * 0.55) / 2, 0.014);
+          upperCrown.castShadow = true;
+          cab.add(upperCrown);
+
+          return cab;
+        };
+
+        const totalCabSpan =
+          G_CAB_WIDTHS.reduce((sum, w) => sum + w, 0) + G_CAB_GAP * (G_CAB_WIDTHS.length - 1);
+        const leftWallCabX = -5.0 + 0.04 + G_CAB_DEPTH / 2;
+        const rightWallCabX = 2.0 - 0.04 - G_CAB_DEPTH / 2;
+
+        (
+          [
+            { x: leftWallCabX, rotY: Math.PI / 2 },
+            { x: rightWallCabX, rotY: -Math.PI / 2 },
+          ] as const
+        ).forEach(({ x, rotY }) => {
+          let cursorZ = -totalCabSpan / 2;
+          G_CAB_WIDTHS.forEach((cabWidth) => {
+            const centerZ = cursorZ + cabWidth / 2;
+            const sideCab = createGreenSideCabinet(cabWidth);
+            sideCab.position.set(x, 0, centerZ);
+            sideCab.rotation.y = rotY;
+            coloredRoomGroup.add(sideCab);
+            cursorZ += cabWidth + G_CAB_GAP;
+          });
+        });
+
+        // Balanced warm fill lights illuminating both side-wall cabinet runs
+        const greenLeftCabLight = new THREE.PointLight(0xffebd0, 1.15, 7.2, 1.15);
+        greenLeftCabLight.position.set(-3.45, 2.25, 0);
+        coloredRoomGroup.add(greenLeftCabLight);
+
+        const greenRightCabLight = new THREE.PointLight(0xffebd0, 1.15, 7.2, 1.15);
+        greenRightCabLight.position.set(0.45, 2.25, 0);
+        coloredRoomGroup.add(greenRightCabLight);
       }
 
       scene.add(coloredRoomGroup);
@@ -11991,6 +13917,1771 @@ export const Room3DScene: React.FC = () => {
 
     (['royalblue', 'brown'] as const).forEach(buildLobbyLogic2FRoom);
 
+    // --- 5E. PINK ROOM BATHROOM (「洗手間/浴室」: 6m deep perpendicular to door × 4m wide parallel to door, 1.2×4m Bathtub + 4m Floor-to-Ceiling Window + 4×1.25m Lily-of-the-Valley Balcony) ---
+    const BATH_W = 4.0; // 寬（跟門平行）4 米 (X ∈ [-2.0, +2.0])
+    const BATH_D = 6.0; // 長（跟門垂直）6 米 (Z ∈ [-3.0, +3.0])
+    const BATH_H = 3.0;
+    const BATH_DOOR_X = -1.10;
+
+    const buildBathroomRoom = () => {
+      const roomState = extraRoomsRef.current.bathroom;
+      const bathGroup = new THREE.Group();
+      bathGroup.visible = activeRoomRef.current === 'bathroom';
+      roomState.roomGroup = bathGroup;
+
+      roomState.defaultPlaqueTitle = 'B1';
+      roomState.plaqueTitles = { 0: '阿璃的宿舍' };
+
+      // 1. Matte Stone-Gray Porcelain Floor Tiles (512x512 procedural grid)
+      const createBathFloorTileTex = () => {
+        const c = document.createElement('canvas');
+        c.width = 512;
+        c.height = 512;
+        const ctx = c.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = '#dde3e8';
+          ctx.fillRect(0, 0, 512, 512);
+          const cells = 2;
+          const step = 512 / cells;
+          for (let gx = 0; gx < cells; gx++) {
+            for (let gy = 0; gy < cells; gy++) {
+              ctx.fillStyle = (gx + gy) % 2 === 0 ? '#e3e8ec' : '#dce2e7';
+              ctx.fillRect(gx * step + 3, gy * step + 3, step - 6, step - 6);
+            }
+          }
+          // Subtle mineral specks
+          for (let i = 0; i < 1600; i++) {
+            const px = (Math.sin(i * 47.3) * 0.5 + 0.5) * 510;
+            const py = (Math.cos(i * 83.1) * 0.5 + 0.5) * 510;
+            ctx.fillStyle = i % 2 === 0 ? 'rgba(255,255,255,0.22)' : 'rgba(130,145,160,0.16)';
+            ctx.fillRect(px, py, 2, 2);
+          }
+          // Crisp grout joints
+          ctx.strokeStyle = '#bcc5ce';
+          ctx.lineWidth = 4;
+          for (let k = 0; k <= cells; k++) {
+            ctx.beginPath();
+            ctx.moveTo(k * step, 0);
+            ctx.lineTo(k * step, 512);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(0, k * step);
+            ctx.lineTo(512, k * step);
+            ctx.stroke();
+          }
+        }
+        const t = new THREE.CanvasTexture(c);
+        t.colorSpace = THREE.SRGBColorSpace;
+        t.wrapS = THREE.RepeatWrapping;
+        t.wrapT = THREE.RepeatWrapping;
+        t.repeat.set(BATH_W / 0.8, BATH_D / 0.8);
+        t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        extraRoomTexturesToDispose.push(t);
+        return t;
+      };
+
+      const createBathWallTileTex = (isAccentSkyBlue: boolean, repeatX: number, repeatY: number) => {
+        const c = document.createElement('canvas');
+        c.width = 512;
+        c.height = 512;
+        const ctx = c.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = isAccentSkyBlue ? '#d4e8f7' : '#f4f6f8';
+          ctx.fillRect(0, 0, 512, 512);
+          const cols = isAccentSkyBlue ? 8 : 4;
+          const rows = isAccentSkyBlue ? 8 : 6;
+          const cw = 512 / cols;
+          const ch = 512 / rows;
+          for (let r = 0; r < rows; r++) {
+            for (let col = 0; col < cols; col++) {
+              const shade = ((r * 7 + col * 13) % 5) * 0.015;
+              if (isAccentSkyBlue) {
+                ctx.fillStyle = (r + col) % 2 === 0
+                  ? `rgba(218, 238, 252, ${0.88 + shade})`
+                  : `rgba(196, 226, 248, ${0.88 + shade})`;
+              } else {
+                ctx.fillStyle = (r + col) % 2 === 0 ? '#f8fafc' : '#f1f5f9';
+              }
+              ctx.fillRect(col * cw + 2, r * ch + 2, cw - 4, ch - 4);
+            }
+          }
+          ctx.strokeStyle = isAccentSkyBlue ? 'rgba(155, 192, 222, 0.55)' : 'rgba(203, 213, 225, 0.72)';
+          ctx.lineWidth = 2.5;
+          for (let x = 0; x <= 512; x += cw) {
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, 512);
+            ctx.stroke();
+          }
+          for (let y = 0; y <= 512; y += ch) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(512, y);
+            ctx.stroke();
+          }
+        }
+        const t = new THREE.CanvasTexture(c);
+        t.colorSpace = THREE.SRGBColorSpace;
+        t.wrapS = THREE.RepeatWrapping;
+        t.wrapT = THREE.RepeatWrapping;
+        t.repeat.set(repeatX, repeatY);
+        t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        extraRoomTexturesToDispose.push(t);
+        return t;
+      };
+
+      const bathFloorTex = createBathFloorTileTex();
+      const bathFloor = new THREE.Mesh(
+        new THREE.PlaneGeometry(BATH_W, BATH_D),
+        new THREE.MeshPhysicalMaterial({
+          map: bathFloorTex,
+          color: 0xf4f7fa,
+          roughness: 0.54,
+          metalness: 0.02,
+          clearcoat: 0.18,
+          clearcoatRoughness: 0.36,
+          envMapIntensity: 0.38,
+        })
+      );
+      bathFloor.rotation.x = -Math.PI / 2;
+      bathFloor.receiveShadow = true;
+      bathGroup.add(bathFloor);
+
+      // 2. Clean Matte White Ceiling (4m × 6m)
+      const bathCeiling = new THREE.Mesh(
+        new THREE.PlaneGeometry(BATH_W, BATH_D),
+        new THREE.MeshStandardMaterial({
+          color: 0xf6f8fa,
+          roughness: 0.92,
+          metalness: 0.0,
+          envMapIntensity: 0.18,
+        })
+      );
+      bathCeiling.position.y = BATH_H;
+      bathCeiling.rotation.x = Math.PI / 2;
+      bathGroup.add(bathCeiling);
+
+      // 3. Tiled Walls (Door wall Z=-3.0, Left wall X=-2.0, Right wall X=+2.0, Back 4m Wall Z=+3.0 framed around 4m Floor-to-Ceiling Window)
+      const makeWallMat = (tex: THREE.Texture, isAccent = false) =>
+        new THREE.MeshPhysicalMaterial({
+          map: tex,
+          color: 0xffffff,
+          roughness: isAccent ? 0.28 : 0.34,
+          metalness: 0.01,
+          clearcoat: isAccent ? 0.55 : 0.40,
+          clearcoatRoughness: 0.20,
+          envMapIntensity: 0.44,
+        });
+
+      const bathFrontWall = new THREE.Mesh(
+        new THREE.PlaneGeometry(BATH_W, BATH_H),
+        makeWallMat(createBathWallTileTex(false, BATH_W / 1.33, BATH_H / 1.36))
+      );
+      bathFrontWall.position.set(0, BATH_H / 2, -BATH_D / 2);
+      bathFrontWall.receiveShadow = true;
+      bathGroup.add(bathFrontWall);
+
+      const bathLeftWall = new THREE.Mesh(
+        new THREE.PlaneGeometry(BATH_D, BATH_H),
+        makeWallMat(createBathWallTileTex(false, BATH_D / 1.33, BATH_H / 1.36))
+      );
+      bathLeftWall.position.set(-BATH_W / 2, BATH_H / 2, 0);
+      bathLeftWall.rotation.y = Math.PI / 2;
+      bathLeftWall.receiveShadow = true;
+      bathGroup.add(bathLeftWall);
+
+      const bathRightWall = new THREE.Mesh(
+        new THREE.PlaneGeometry(BATH_D, BATH_H),
+        makeWallMat(createBathWallTileTex(false, BATH_D / 1.33, BATH_H / 1.36))
+      );
+      bathRightWall.position.set(BATH_W / 2, BATH_H / 2, 0);
+      bathRightWall.rotation.y = -Math.PI / 2;
+      bathRightWall.receiveShadow = true;
+      bathGroup.add(bathRightWall);
+
+      // 4m Floor-to-Ceiling Window along the 4m Back Wall (Z = +3.0, X ∈ [-2.0, +2.0], behind the 4m side of the bathtub)
+      const WIN_X_MIN = -1.96;
+      const WIN_X_MAX = 1.96;
+      const WIN_W = 4.00; // Full 4m width matching the 4m bathtub side
+      const WIN_Y_MIN = 0.04;
+      const WIN_Y_MAX = 2.92;
+      const WIN_H = WIN_Y_MAX - WIN_Y_MIN;
+      const WIN_Y_CENTER = (WIN_Y_MIN + WIN_Y_MAX) / 2;
+
+      const addBackWallSegment = (xMin: number, xMax: number, yMin: number, yMax: number) => {
+        const segW = xMax - xMin;
+        const segH = yMax - yMin;
+        if (segW <= 0.001 || segH <= 0.001) return;
+        const segMesh = new THREE.Mesh(
+          new THREE.PlaneGeometry(segW, segH),
+          makeWallMat(createBathWallTileTex(true, segW / 1.25, segH / 1.25), true)
+        );
+        segMesh.position.set((xMin + xMax) / 2, (yMin + yMax) / 2, BATH_D / 2);
+        segMesh.rotation.y = Math.PI;
+        segMesh.receiveShadow = true;
+        bathGroup.add(segMesh);
+      };
+      addBackWallSegment(-BATH_W / 2, WIN_X_MIN, 0, BATH_H); // Left thin pier
+      addBackWallSegment(WIN_X_MAX, BATH_W / 2, 0, BATH_H);  // Right thin pier
+      addBackWallSegment(WIN_X_MIN, WIN_X_MAX, WIN_Y_MAX, BATH_H); // Header above 4m window
+      addBackWallSegment(WIN_X_MIN, WIN_X_MAX, 0, WIN_Y_MIN);      // Low floor sill strip
+
+      // Subtle ceramic baseboard trim along non-tub walls
+      const bathTrimMat = new THREE.MeshStandardMaterial({ color: 0xd0d8e0, roughness: 0.45 });
+      [
+        [BATH_W, 0.08, 0.025, 0, 0.04, -BATH_D / 2 + 0.0125],
+        [0.025, 0.08, BATH_D - 1.20, -BATH_W / 2 + 0.0125, 0.04, -0.60],
+        [0.025, 0.08, BATH_D - 1.20, BATH_W / 2 - 0.0125, 0.04, -0.60],
+      ].forEach(([bw, bh, bd, bx, by, bz]) => {
+        const trim = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), bathTrimMat);
+        trim.position.set(bx, by, bz);
+        bathGroup.add(trim);
+      });
+
+      // 4. Return Portal Door on Front Wall (Z = -3.0, X = -1.10, Silver Top -> 阿璃的宿舍)
+      const bathPortalDoor = createPortalDoorAndDial({
+        colors: roomState.colors,
+        hasColorSlot: roomState.hasColorSlot,
+        initialIdx: roomState.colorIdx,
+        currentAngle: roomState.currentAngle,
+        showFloorLabel: true,
+        floorLabelTexture: getCarvedPlaqueTexture('阿璃的宿舍'),
+        accentWoodTint: 0x264159,
+      });
+      bathPortalDoor.doorGroup.position.set(BATH_DOOR_X, 0, -BATH_D / 2);
+      bathGroup.add(bathPortalDoor.doorGroup);
+
+      roomState.doorHitbox = bathPortalDoor.doorHitbox;
+      roomState.doorLeafPivot = bathPortalDoor.leafPivot;
+      roomState.wheelGroup = bathPortalDoor.wheelGroup;
+      roomState.outerGearGroup = bathPortalDoor.outerGearGroup;
+      roomState.dialHitbox = bathPortalDoor.dialHitbox;
+      roomState.dialLight = bathPortalDoor.dialLight;
+      roomState.tipGemMat = bathPortalDoor.tipGemMat;
+      roomState.plaqueMat = bathPortalDoor.plaqueMat;
+      roomState.sectorMats = bathPortalDoor.sectorMats;
+      roomState.rimGemMats = bathPortalDoor.rimGemMats;
+
+      // 5. Wall-to-Wall 1.2m × 4.0m Alcove Bathtub along Opposite Wall (門走進去正面牆上的 1.2×4米浴缸)
+      // Occupies X ∈ [-2.0, +2.0] (4.0m wide) and Z ∈ [+1.80, +3.00] (1.2m deep), height 0.58m
+      const TUB_W = 4.00;
+      const TUB_D = 1.20;
+      const TUB_H = 0.58;
+      const TUB_RIM_FRONT = 0.10;
+      const TUB_RIM_SIDE = 0.11;
+      const TUB_RIM_BACK = 0.13;
+      const TUB_INNER_W = TUB_W - TUB_RIM_SIDE * 2; // 3.78m
+      const TUB_INNER_D = TUB_D - TUB_RIM_FRONT - TUB_RIM_BACK; // 0.97m
+      const TUB_FLOOR_Y = 0.095;
+      const TUB_WATER_Y = 0.44;
+      const TUB_Z_MIN = BATH_D / 2 - TUB_D; // +1.80
+      const TUB_Z_MAX = BATH_D / 2;         // +3.00
+      const TUB_CENTER_Z = (TUB_Z_MIN + TUB_Z_MAX) / 2; // +2.40
+
+      const bathtubGroup = new THREE.Group();
+      const tubPorcelainMat = new THREE.MeshPhysicalMaterial({
+        color: 0xfbfcfe,
+        roughness: 0.10,
+        metalness: 0.01,
+        clearcoat: 0.96,
+        clearcoatRoughness: 0.06,
+        reflectivity: 0.92,
+        envMapIntensity: 1.05,
+      });
+      const tubApronMat = new THREE.MeshPhysicalMaterial({
+        color: 0xf4f7fa,
+        roughness: 0.18,
+        metalness: 0.02,
+        clearcoat: 0.70,
+        clearcoatRoughness: 0.14,
+        envMapIntensity: 0.85,
+      });
+      const tubChromeMat = new THREE.MeshStandardMaterial({
+        color: 0xe6edf5,
+        roughness: 0.14,
+        metalness: 0.94,
+        envMapIntensity: 1.45,
+      });
+      const tubWaterMat = new THREE.MeshPhysicalMaterial({
+        color: 0xbae6fd,
+        roughness: 0.04,
+        metalness: 0.02,
+        clearcoat: 1.0,
+        clearcoatRoughness: 0.03,
+        reflectivity: 0.98,
+        envMapIntensity: 1.55,
+        transparent: true,
+        opacity: 0.46,
+        depthWrite: false,
+      });
+
+      // Recessed dark shadow toe-kick under front apron
+      const tubToeKick = new THREE.Mesh(
+        new THREE.BoxGeometry(TUB_W, 0.042, 0.055),
+        new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.72 })
+      );
+      tubToeKick.position.set(0, 0.021, TUB_Z_MIN + 0.045);
+      bathtubGroup.add(tubToeKick);
+
+      // Front solid porcelain apron panel
+      const tubFrontApron = new THREE.Mesh(
+        new THREE.BoxGeometry(TUB_W, TUB_H - 0.04, TUB_RIM_FRONT),
+        tubApronMat
+      );
+      tubFrontApron.position.set(0, 0.04 + (TUB_H - 0.04) / 2, TUB_Z_MIN + TUB_RIM_FRONT / 2);
+      tubFrontApron.castShadow = true;
+      tubFrontApron.receiveShadow = true;
+      bathtubGroup.add(tubFrontApron);
+
+      // Left, Right & Back solid porcelain tub housing walls
+      const tubBackWall = new THREE.Mesh(
+        new THREE.BoxGeometry(TUB_W, TUB_H, TUB_RIM_BACK),
+        tubPorcelainMat
+      );
+      tubBackWall.position.set(0, TUB_H / 2, TUB_Z_MAX - TUB_RIM_BACK / 2);
+      tubBackWall.receiveShadow = true;
+      bathtubGroup.add(tubBackWall);
+
+      [-1, 1].forEach((side) => {
+        const tubSideWall = new THREE.Mesh(
+          new THREE.BoxGeometry(TUB_RIM_SIDE, TUB_H, TUB_D),
+          tubPorcelainMat
+        );
+        tubSideWall.position.set(side * (TUB_W / 2 - TUB_RIM_SIDE / 2), TUB_H / 2, TUB_CENTER_Z);
+        tubSideWall.receiveShadow = true;
+        bathtubGroup.add(tubSideWall);
+      });
+
+      // Molded top porcelain rim frame (hollow cutout around the 3.78m × 0.97m soaking basin)
+      const tubRimOuterShape = new THREE.Shape();
+      tubRimOuterShape.moveTo(-TUB_W / 2, -TUB_D / 2);
+      tubRimOuterShape.lineTo(TUB_W / 2, -TUB_D / 2);
+      tubRimOuterShape.lineTo(TUB_W / 2, TUB_D / 2);
+      tubRimOuterShape.lineTo(-TUB_W / 2, TUB_D / 2);
+      tubRimOuterShape.closePath();
+
+      const basinXMin = -TUB_INNER_W / 2;
+      const basinXMax = TUB_INNER_W / 2;
+      const basinYMin = -TUB_D / 2 + TUB_RIM_BACK; // maps to Z_MAX - TUB_RIM_BACK after rotation
+      const basinYMax = TUB_D / 2 - TUB_RIM_FRONT; // maps to Z_MIN + TUB_RIM_FRONT after rotation
+      const basinCornerR = 0.14;
+      const tubBasinHole = new THREE.Path();
+      tubBasinHole.moveTo(basinXMin + basinCornerR, basinYMin);
+      tubBasinHole.lineTo(basinXMax - basinCornerR, basinYMin);
+      tubBasinHole.quadraticCurveTo(basinXMax, basinYMin, basinXMax, basinYMin + basinCornerR);
+      tubBasinHole.lineTo(basinXMax, basinYMax - basinCornerR);
+      tubBasinHole.quadraticCurveTo(basinXMax, basinYMax, basinXMax - basinCornerR, basinYMax);
+      tubBasinHole.lineTo(basinXMin + basinCornerR, basinYMax);
+      tubBasinHole.quadraticCurveTo(basinXMin, basinYMax, basinXMin, basinYMax - basinCornerR);
+      tubBasinHole.lineTo(basinXMin, basinYMin + basinCornerR);
+      tubBasinHole.quadraticCurveTo(basinXMin, basinYMin, basinXMin + basinCornerR, basinYMin);
+      tubRimOuterShape.holes.push(tubBasinHole);
+
+      const tubTopDeckMesh = new THREE.Mesh(
+        new THREE.ExtrudeGeometry(tubRimOuterShape, {
+          depth: 0.036,
+          bevelEnabled: true,
+          bevelThickness: 0.008,
+          bevelSize: 0.008,
+          bevelSegments: 3,
+          curveSegments: 16,
+        }),
+        tubPorcelainMat
+      );
+      tubTopDeckMesh.rotation.x = Math.PI / 2;
+      tubTopDeckMesh.position.set(0, TUB_H, TUB_CENTER_Z);
+      tubTopDeckMesh.castShadow = true;
+      tubTopDeckMesh.receiveShadow = true;
+      bathtubGroup.add(tubTopDeckMesh);
+
+      // Inner soaking basin floor + chrome floor drain & overflow plate
+      const innerCenterZ = TUB_Z_MIN + TUB_RIM_FRONT + TUB_INNER_D / 2;
+      const tubInnerFloor = new THREE.Mesh(
+        new THREE.BoxGeometry(TUB_INNER_W + 0.04, 0.03, TUB_INNER_D + 0.04),
+        tubPorcelainMat
+      );
+      tubInnerFloor.position.set(0, TUB_FLOOR_Y - 0.015, innerCenterZ);
+      tubInnerFloor.receiveShadow = true;
+      bathtubGroup.add(tubInnerFloor);
+
+      // Sloped inner backrest ramps on left & right ends of the 4m soaking basin
+      [-1, 1].forEach((side) => {
+        const slopeRamp = new THREE.Mesh(
+          new THREE.BoxGeometry(0.18, TUB_H - TUB_FLOOR_Y, TUB_INNER_D + 0.02),
+          tubPorcelainMat
+        );
+        slopeRamp.position.set(
+          side * (TUB_INNER_W / 2 - 0.045),
+          (TUB_H + TUB_FLOOR_Y) / 2 - 0.01,
+          innerCenterZ
+        );
+        slopeRamp.rotation.z = side * 0.22;
+        slopeRamp.receiveShadow = true;
+        bathtubGroup.add(slopeRamp);
+      });
+
+      const drainOuter = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.038, 0.038, 0.005, 24),
+        tubChromeMat
+      );
+      drainOuter.position.set(0, TUB_FLOOR_Y + 0.0025, innerCenterZ);
+      bathtubGroup.add(drainOuter);
+
+      const overflowRing = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.032, 0.032, 0.010, 20),
+        tubChromeMat
+      );
+      overflowRing.rotation.x = Math.PI / 2;
+      overflowRing.position.set(0, 0.49, TUB_Z_MAX - TUB_RIM_BACK - 0.004);
+      bathtubGroup.add(overflowRing);
+
+      // Shimmering aqua bath water fill inside the 1.2×4m tub
+      const waterSurface = new THREE.Mesh(
+        new THREE.PlaneGeometry(TUB_INNER_W - 0.04, TUB_INNER_D - 0.03),
+        tubWaterMat
+      );
+      waterSurface.rotation.x = -Math.PI / 2;
+      waterSurface.position.set(0, TUB_WATER_Y, innerCenterZ);
+      waterSurface.renderOrder = 2;
+      bathtubGroup.add(waterSurface);
+
+      // Brushed-Chrome Deck-Mounted Swan-Neck Bathtub Faucet + Hot/Cold Mixers + Handheld Shower Wand
+      const faucetZ = TUB_Z_MAX - TUB_RIM_BACK / 2;
+      const faucetDeckPlate = new THREE.Mesh(
+        new THREE.BoxGeometry(0.38, 0.012, 0.075),
+        tubChromeMat
+      );
+      faucetDeckPlate.position.set(0, TUB_H + 0.006, faucetZ);
+      faucetDeckPlate.castShadow = true;
+      bathtubGroup.add(faucetDeckPlate);
+
+      const spoutCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(0, TUB_H + 0.010, faucetZ),
+        new THREE.Vector3(0, TUB_H + 0.165, faucetZ - 0.008),
+        new THREE.Vector3(0, TUB_H + 0.225, faucetZ - 0.075),
+        new THREE.Vector3(0, TUB_H + 0.185, faucetZ - 0.145),
+      ]);
+      const spoutMesh = new THREE.Mesh(
+        new THREE.TubeGeometry(spoutCurve, 24, 0.014, 14, false),
+        tubChromeMat
+      );
+      spoutMesh.castShadow = true;
+      bathtubGroup.add(spoutMesh);
+
+      [-0.125, 0.125].forEach((hx) => {
+        const valveBase = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.018, 0.020, 0.034, 16),
+          tubChromeMat
+        );
+        valveBase.position.set(hx, TUB_H + 0.025, faucetZ);
+        bathtubGroup.add(valveBase);
+
+        const valveLever = new THREE.Mesh(
+          new THREE.BoxGeometry(0.056, 0.010, 0.014),
+          tubChromeMat
+        );
+        valveLever.position.set(hx + Math.sign(hx) * 0.018, TUB_H + 0.044, faucetZ);
+        bathtubGroup.add(valveLever);
+      });
+
+      // Handheld shower wand perched beside faucet
+      const showerStand = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.013, 0.016, 0.16, 12),
+        tubChromeMat
+      );
+      showerStand.position.set(-0.24, TUB_H + 0.08, faucetZ);
+      bathtubGroup.add(showerStand);
+
+      const showerHead = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.032, 0.016, 0.045, 16),
+        tubChromeMat
+      );
+      showerHead.rotation.x = 0.65;
+      showerHead.position.set(-0.24, TUB_H + 0.17, faucetZ - 0.022);
+      bathtubGroup.add(showerHead);
+
+      // Two cushioned white spa bath pillows + neatly folded towels on right deck corner
+      const pillowMat = new THREE.MeshPhysicalMaterial({
+        color: 0xf8fafc,
+        roughness: 0.65,
+        sheen: 0.45,
+        sheenColor: new THREE.Color(0xffffff),
+      });
+      [-1.18, 1.18].forEach((px) => {
+        const bathPillow = new THREE.Mesh(
+          new THREE.CapsuleGeometry(0.055, 0.20, 6, 12),
+          pillowMat
+        );
+        bathPillow.rotation.z = Math.PI / 2;
+        bathPillow.scale.set(1.0, 1.0, 0.65);
+        bathPillow.position.set(px, TUB_H + 0.025, TUB_Z_MAX - 0.10);
+        bathPillow.castShadow = true;
+        bathtubGroup.add(bathPillow);
+      });
+
+      const towelBlueMat = new THREE.MeshStandardMaterial({ color: 0x93c5fd, roughness: 0.90 });
+      const towelCreamMat = new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.90 });
+      [
+        [TUB_H + 0.022, towelBlueMat],
+        [TUB_H + 0.056, towelCreamMat],
+      ].forEach(([ty, tMat], tIdx) => {
+        const foldedTowel = new THREE.Mesh(
+          new THREE.BoxGeometry(0.28, 0.032, 0.19),
+          tMat as THREE.Material
+        );
+        foldedTowel.position.set(1.66, ty as number, TUB_Z_MIN + 0.055);
+        foldedTowel.rotation.y = tIdx === 0 ? 0.08 : -0.05;
+        foldedTowel.castShadow = true;
+        bathtubGroup.add(foldedTowel);
+      });
+
+      bathGroup.add(bathtubGroup);
+
+      // 6. Soft Sky-Blue & Ivory Bath Mat on Floor directly in front of the 4m Bathtub
+      const bathMatMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(1.48, 0.014, 0.68),
+        new THREE.MeshPhysicalMaterial({
+          color: 0xcbe4f7,
+          roughness: 0.94,
+          sheen: 0.72,
+          sheenColor: new THREE.Color(0xf0f8ff),
+        })
+      );
+      bathMatMesh.position.set(0, 0.007, TUB_Z_MIN - 0.38);
+      bathMatMesh.receiveShadow = true;
+      bathGroup.add(bathMatMesh);
+
+      // 6B. Full 4m Interactive Sliding Floor-to-Ceiling Panoramic Window (四米大落地窗 - 點擊打開、再點出去陽台)
+      const windowGroup = new THREE.Group();
+      const winFrameMat = new THREE.MeshStandardMaterial({
+        color: 0x26303d,
+        roughness: 0.32,
+        metalness: 0.78,
+        envMapIntensity: 1.05,
+      });
+      const winGlassMat = new THREE.MeshPhysicalMaterial({
+        color: 0xdbeafe,
+        roughness: 0.04,
+        metalness: 0.06,
+        clearcoat: 1.0,
+        clearcoatRoughness: 0.03,
+        reflectivity: 0.96,
+        envMapIntensity: 1.35,
+        transparent: true,
+        opacity: 0.16,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+
+      // Outer perimeter dark charcoal aluminum casing (top, bottom, left/right jambs across full 4m width)
+      const frameDepth = 0.095;
+      const frameThick = 0.055;
+      const topFrame = new THREE.Mesh(new THREE.BoxGeometry(WIN_W, frameThick, frameDepth), winFrameMat);
+      topFrame.position.set(0, WIN_Y_MAX - frameThick / 2, BATH_D / 2 - 0.01);
+      windowGroup.add(topFrame);
+
+      const bottomFrame = new THREE.Mesh(new THREE.BoxGeometry(WIN_W, frameThick, frameDepth), winFrameMat);
+      bottomFrame.position.set(0, WIN_Y_MIN + frameThick / 2, BATH_D / 2 - 0.01);
+      windowGroup.add(bottomFrame);
+
+      [-BATH_W / 2 + frameThick / 2, BATH_W / 2 - frameThick / 2].forEach((mx) => {
+        const jamb = new THREE.Mesh(new THREE.BoxGeometry(frameThick, WIN_H, frameDepth), winFrameMat);
+        jamb.position.set(mx, WIN_Y_CENTER, BATH_D / 2 - 0.01);
+        jamb.castShadow = true;
+        windowGroup.add(jamb);
+      });
+
+      // Vertical fixed structural mullions at X = -1.00 and +1.00 splitting outer bays from center 2m sliding passage
+      [-1.00, 1.00].forEach((mx) => {
+        const mullion = new THREE.Mesh(new THREE.BoxGeometry(0.040, WIN_H - frameThick * 2, 0.075), winFrameMat);
+        mullion.position.set(mx, WIN_Y_CENTER, BATH_D / 2 - 0.005);
+        mullion.castShadow = true;
+        windowGroup.add(mullion);
+      });
+
+      // Horizontal architectural transom bar at Y = 2.34m across all 4m + upper transom center mullion
+      const TRANSOM_Y = 2.34;
+      const transomBar = new THREE.Mesh(new THREE.BoxGeometry(WIN_W - frameThick * 2, 0.032, 0.065), winFrameMat);
+      transomBar.position.set(0, TRANSOM_Y, BATH_D / 2 - 0.005);
+      windowGroup.add(transomBar);
+
+      const upperCenterMullion = new THREE.Mesh(
+        new THREE.BoxGeometry(0.036, WIN_Y_MAX - frameThick - TRANSOM_Y, 0.065),
+        winFrameMat
+      );
+      upperCenterMullion.position.set(0, (TRANSOM_Y + WIN_Y_MAX - frameThick) / 2, BATH_D / 2 - 0.005);
+      windowGroup.add(upperCenterMullion);
+
+      // Fixed transom glass (Y = 2.34..2.865) + fixed outer left/right glass bays (X ∈ [-1.945, -1.00] & [+1.00, +1.945])
+      const upperTransomGlass = new THREE.Mesh(
+        new THREE.PlaneGeometry(WIN_W - frameThick * 2, WIN_Y_MAX - frameThick - TRANSOM_Y - 0.016),
+        winGlassMat
+      );
+      upperTransomGlass.rotation.y = Math.PI;
+      upperTransomGlass.position.set(0, (TRANSOM_Y + WIN_Y_MAX - frameThick) / 2, BATH_D / 2 + 0.008);
+      upperTransomGlass.renderOrder = 3;
+      windowGroup.add(upperTransomGlass);
+
+      const lowerBayH = TRANSOM_Y - (WIN_Y_MIN + frameThick);
+      const lowerBayCenterY = (WIN_Y_MIN + frameThick + TRANSOM_Y) / 2;
+      [-1.475, 1.475].forEach((bx) => {
+        const sideFixedGlass = new THREE.Mesh(
+          new THREE.PlaneGeometry(0.92, lowerBayH - 0.02),
+          winGlassMat
+        );
+        sideFixedGlass.rotation.y = Math.PI;
+        sideFixedGlass.position.set(bx, lowerBayCenterY, BATH_D / 2 + 0.004);
+        sideFixedGlass.renderOrder = 3;
+        windowGroup.add(sideFixedGlass);
+      });
+
+      // Center Twin Sliding Glass Door Leaves (X ∈ [-1.00, 0.00] & [0.00, +1.00]) that slide smoothly behind outer bays
+      const buildSlidingDoorLeaf = (sideSign: -1 | 1, trackZOffset: number) => {
+        const leafGroup = new THREE.Group();
+        const leafW = 1.00;
+        const leafH = lowerBayH - 0.024;
+        const leafCenterX = sideSign * 0.50;
+        const stileW = 0.032;
+        const railH = 0.032;
+        const leafZ = BATH_D / 2 + trackZOffset;
+
+        // Top & Bottom horizontal sash rails
+        const topRail = new THREE.Mesh(new THREE.BoxGeometry(leafW, railH, 0.036), winFrameMat);
+        topRail.position.set(leafCenterX, lowerBayCenterY + leafH / 2 - railH / 2, leafZ);
+        leafGroup.add(topRail);
+
+        const botRail = new THREE.Mesh(new THREE.BoxGeometry(leafW, railH, 0.036), winFrameMat);
+        botRail.position.set(leafCenterX, lowerBayCenterY - leafH / 2 + railH / 2, leafZ);
+        leafGroup.add(botRail);
+
+        // Left & Right vertical sash stiles
+        [-leafW / 2 + stileW / 2, leafW / 2 - stileW / 2].forEach((sx) => {
+          const stile = new THREE.Mesh(new THREE.BoxGeometry(stileW, leafH, 0.036), winFrameMat);
+          stile.position.set(leafCenterX + sx, lowerBayCenterY, leafZ);
+          stile.castShadow = true;
+          leafGroup.add(stile);
+        });
+
+        // Clear tempered glass pane inside sliding sash
+        const sashGlass = new THREE.Mesh(
+          new THREE.PlaneGeometry(leafW - stileW * 2, leafH - railH * 2),
+          winGlassMat
+        );
+        sashGlass.rotation.y = Math.PI;
+        sashGlass.position.set(leafCenterX, lowerBayCenterY, leafZ);
+        sashGlass.renderOrder = 4;
+        leafGroup.add(sashGlass);
+
+        // Sleek vertical brushed-chrome pull handle near center meeting edge
+        const handleX = sideSign * 0.055;
+        const pullBar = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.009, 0.009, 0.34, 12),
+          tubChromeMat
+        );
+        pullBar.position.set(handleX, 1.16, leafZ - 0.032);
+        leafGroup.add(pullBar);
+
+        [-0.13, 0.13].forEach((hy) => {
+          const bracket = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.007, 0.007, 0.026, 10),
+            tubChromeMat
+          );
+          bracket.rotation.x = Math.PI / 2;
+          bracket.position.set(handleX, 1.16 + hy, leafZ - 0.018);
+          leafGroup.add(bracket);
+        });
+
+        return leafGroup;
+      };
+
+      const leftSlidingLeaf = buildSlidingDoorLeaf(-1, 0.014);
+      const rightSlidingLeaf = buildSlidingDoorLeaf(1, 0.030);
+      windowGroup.add(leftSlidingLeaf);
+      windowGroup.add(rightSlidingLeaf);
+      bathWindowLeftLeafRef.current = leftSlidingLeaf;
+      bathWindowRightLeafRef.current = rightSlidingLeaf;
+
+      // Invisible clickable hitbox spanning the 4m floor-to-ceiling window (click once to open, click again to step out)
+      const bathWindowHitbox = new THREE.Mesh(
+        new THREE.BoxGeometry(WIN_W - 0.06, WIN_H - 0.06, 0.16),
+        new THREE.MeshBasicMaterial({ visible: false })
+      );
+      bathWindowHitbox.name = 'bath_window_hitbox';
+      bathWindowHitbox.position.set(0, WIN_Y_CENTER, BATH_D / 2 + 0.01);
+      bathWindowHitboxRef.current = bathWindowHitbox;
+      windowGroup.add(bathWindowHitbox);
+
+      // Brushed chrome ceiling curtain track + sheer white linen drapes neatly gathered at left & right edges
+      const curtainTrack = new THREE.Mesh(
+        new THREE.BoxGeometry(WIN_W - 0.06, 0.024, 0.035),
+        tubChromeMat
+      );
+      curtainTrack.position.set(0, BATH_H - 0.03, BATH_D / 2 - 0.075);
+      windowGroup.add(curtainTrack);
+
+      const sheerCurtainMat = new THREE.MeshPhysicalMaterial({
+        color: 0xf8fafc,
+        roughness: 0.88,
+        sheen: 0.7,
+        sheenColor: new THREE.Color(0xffffff),
+        transparent: true,
+        opacity: 0.78,
+        side: THREE.DoubleSide,
+      });
+      [-1, 1].forEach((side) => {
+        for (let fold = 0; fold < 4; fold++) {
+          const pleat = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.032, 0.042, WIN_H - 0.56, 10),
+            sheerCurtainMat
+          );
+          pleat.scale.set(1.15, 1.0, 0.68);
+          pleat.position.set(
+            side * (BATH_W / 2 - 0.08 - fold * 0.048),
+            TUB_H + (WIN_H - 0.56) / 2,
+            BATH_D / 2 - 0.085
+          );
+          pleat.castShadow = true;
+          windowGroup.add(pleat);
+        }
+      });
+
+      bathGroup.add(windowGroup);
+
+      // 6C. Exterior 4m × 1.66m Balcony (Z ∈ [+3.00, +4.66], X ∈ [-2.00, +2.00])
+      //     Includes Lily of the Valley (鈴蘭花) planter, Rocking Chair (搖椅), Glass Table + Tissue Pack, & 1.25×0.32×1.40m 3-Tier Cabinet
+      const exteriorVistaGroup = new THREE.Group();
+      const BALC_W = 4.00;
+      const BALC_D = 1.66;
+      const BALC_Z_CENTER = BATH_D / 2 + BALC_D / 2; // +3.83
+      const BALC_FLOOR_Y = -0.01;
+
+      // Outdoor teak-slat balcony deck (4.0m wide × 1.66m deep)
+      const createDeckPlankTex = () => {
+        const c = document.createElement('canvas');
+        c.width = 512;
+        c.height = 512;
+        const ctx = c.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = '#5c4636';
+          ctx.fillRect(0, 0, 512, 512);
+          for (let p = 0; p < 8; p++) {
+            const y = p * 64;
+            ctx.fillStyle = p % 2 === 0 ? '#6e5440' : '#634b38';
+            ctx.fillRect(0, y + 3, 512, 58);
+            ctx.fillStyle = '#2e2219';
+            ctx.fillRect(0, y, 512, 3);
+          }
+        }
+        const t = new THREE.CanvasTexture(c);
+        t.colorSpace = THREE.SRGBColorSpace;
+        t.wrapS = THREE.RepeatWrapping;
+        t.wrapT = THREE.RepeatWrapping;
+        t.repeat.set(3.2, 2.4);
+        t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        extraRoomTexturesToDispose.push(t);
+        return t;
+      };
+      const balconyDeck = new THREE.Mesh(
+        new THREE.BoxGeometry(BALC_W, 0.08, BALC_D),
+        new THREE.MeshStandardMaterial({ map: createDeckPlankTex(), roughness: 0.78 })
+      );
+      balconyDeck.position.set(0, -0.05, BALC_Z_CENTER);
+      balconyDeck.receiveShadow = true;
+      exteriorVistaGroup.add(balconyDeck);
+
+      // Balcony glass & charcoal metal railing along outer 4m edge (Z = +4.63) and 1.66m side returns (X = ±1.97)
+      const railPostMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.35, metalness: 0.8 });
+      const BALC_Z_OUTER = BATH_D / 2 + BALC_D - 0.03; // +4.63
+      const frontTopRail = new THREE.Mesh(new THREE.BoxGeometry(BALC_W, 0.04, 0.055), railPostMat);
+      frontTopRail.position.set(0, 1.02, BALC_Z_OUTER);
+      exteriorVistaGroup.add(frontTopRail);
+
+      [-1.97, -0.98, 0.0, 0.98, 1.97].forEach((px) => {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.045, 1.04, 0.045), railPostMat);
+        post.position.set(px, 0.50, BALC_Z_OUTER);
+        exteriorVistaGroup.add(post);
+      });
+      const balconyFrontGlass = new THREE.Mesh(
+        new THREE.PlaneGeometry(BALC_W - 0.04, 0.96),
+        new THREE.MeshPhysicalMaterial({
+          color: 0x93c5fd,
+          roughness: 0.06,
+          transparent: true,
+          opacity: 0.18,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+        })
+      );
+      balconyFrontGlass.position.set(0, 0.52, BALC_Z_OUTER);
+      exteriorVistaGroup.add(balconyFrontGlass);
+
+      // Side return railings (1.66m deep at X = ±1.97)
+      [-1, 1].forEach((side) => {
+        const sideTopRail = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.04, BALC_D), railPostMat);
+        sideTopRail.position.set(side * 1.97, 1.02, BALC_Z_CENTER);
+        exteriorVistaGroup.add(sideTopRail);
+
+        const sideRailGlass = new THREE.Mesh(
+          new THREE.PlaneGeometry(BALC_D - 0.04, 0.96),
+          new THREE.MeshPhysicalMaterial({
+            color: 0x93c5fd,
+            roughness: 0.06,
+            transparent: true,
+            opacity: 0.18,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+          })
+        );
+        sideRailGlass.rotation.y = Math.PI / 2;
+        sideRailGlass.position.set(side * 1.97, 0.52, BALC_Z_CENTER);
+        exteriorVistaGroup.add(sideRailGlass);
+      });
+
+      // Stone planter box along outer railing (X ∈ [-1.82, +1.52], Z = +4.45) leaving right side X ∈ [+1.64, +1.96] clear for 3-tier cabinet
+      const planterMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.72 });
+      const PLANTER_W = 3.34;
+      const PLANTER_D = 0.24;
+      const PLANTER_X = -0.15;
+      const PLANTER_Z = BATH_D / 2 + BALC_D - 0.21; // +4.45 (Z ∈ [+4.33, +4.57])
+      const planterBox = new THREE.Mesh(new THREE.BoxGeometry(PLANTER_W, 0.36, PLANTER_D), planterMat);
+      planterBox.position.set(PLANTER_X, BALC_FLOOR_Y + 0.18, PLANTER_Z);
+      planterBox.castShadow = true;
+      planterBox.receiveShadow = true;
+      exteriorVistaGroup.add(planterBox);
+
+      const planterSoil = new THREE.Mesh(
+        new THREE.BoxGeometry(PLANTER_W - 0.08, 0.04, PLANTER_D - 0.06),
+        new THREE.MeshStandardMaterial({ color: 0x2b211a, roughness: 0.95 })
+      );
+      planterSoil.position.set(PLANTER_X, BALC_FLOOR_Y + 0.355, PLANTER_Z);
+      exteriorVistaGroup.add(planterSoil);
+
+      // Composite procedural Lily of the Valley (鈴蘭花): broad lance leaves + arching green flower stalks + dangling white bell blossoms
+      const lilyLeafMat = new THREE.MeshStandardMaterial({
+        color: 0x2e6f40,
+        roughness: 0.46,
+        side: THREE.DoubleSide,
+      });
+      const lilyLeafLightMat = new THREE.MeshStandardMaterial({
+        color: 0x418b52,
+        roughness: 0.44,
+        side: THREE.DoubleSide,
+      });
+      const lilyStemMat = new THREE.MeshStandardMaterial({ color: 0x4d9456, roughness: 0.50 });
+      const lilyBellMat = new THREE.MeshPhysicalMaterial({
+        color: 0xffffff,
+        emissive: 0xeef6ff,
+        emissiveIntensity: 0.22,
+        roughness: 0.25,
+        clearcoat: 0.45,
+        side: THREE.DoubleSide,
+      });
+      const lilyStamenMat = new THREE.MeshStandardMaterial({
+        color: 0xfde68a,
+        emissive: 0xfef08a,
+        emissiveIntensity: 0.35,
+      });
+
+      // Shared LatheGeometry for dainty fluted bell-shaped Lily of the Valley blossom (bottom-open bell hanging downward)
+      const bellProfile = [
+        new THREE.Vector2(0.002, 0.032),
+        new THREE.Vector2(0.012, 0.028),
+        new THREE.Vector2(0.020, 0.016),
+        new THREE.Vector2(0.025, 0.004),
+        new THREE.Vector2(0.028, -0.006),
+      ];
+      const lilyBellGeo = new THREE.LatheGeometry(bellProfile, 14);
+      const lilyStamenGeo = new THREE.SphereGeometry(0.006, 8, 6);
+      const lilyLeafGeo = new THREE.SphereGeometry(0.085, 10, 8);
+
+      const LILY_CLUSTERS = 14;
+      for (let cIdx = 0; cIdx < LILY_CLUSTERS; cIdx++) {
+        const cx = PLANTER_X - (PLANTER_W / 2 - 0.20) + (cIdx / (LILY_CLUSTERS - 1)) * (PLANTER_W - 0.40);
+        const cz = PLANTER_Z + (cIdx % 2 === 0 ? -0.025 : 0.025);
+        const clusterScale = 0.88 + ((cIdx * 37) % 5) * 0.07;
+        const clusterYaw = ((cIdx * 73) % 100) / 100 * 0.9 - 0.45;
+        const clusterGroup = new THREE.Group();
+        clusterGroup.position.set(cx, BALC_FLOOR_Y + 0.36, cz);
+        clusterGroup.rotation.y = clusterYaw;
+        clusterGroup.scale.setScalar(clusterScale);
+
+        // 3 broad upright lance-shaped Lily of the Valley leaves cradling the stems
+        for (let lf = 0; lf < 3; lf++) {
+          const leafAngle = -0.6 + lf * 0.6;
+          const leafMesh = new THREE.Mesh(lilyLeafGeo, lf === 1 ? lilyLeafLightMat : lilyLeafMat);
+          leafMesh.scale.set(0.52, 2.35, 0.12);
+          leafMesh.position.set(Math.sin(leafAngle) * 0.055, 0.21, Math.cos(leafAngle) * 0.025);
+          leafMesh.rotation.set(0.18 - lf * 0.08, leafAngle * 0.8, -Math.sin(leafAngle) * 0.26);
+          clusterGroup.add(leafMesh);
+        }
+
+        // 2 graceful arching raceme stems per cluster, each carrying 5-6 hanging white bell flowers
+        for (let st = 0; st < 2; st++) {
+          const stemLeanX = st === 0 ? -0.045 : 0.05;
+          const stemH = st === 0 ? 0.46 : 0.40;
+          const stemCurve = new THREE.CatmullRomCurve3([
+            new THREE.Vector3(stemLeanX * 0.3, 0.0, 0.0),
+            new THREE.Vector3(stemLeanX * 0.8, stemH * 0.52, -0.02),
+            new THREE.Vector3(stemLeanX * 1.1, stemH * 0.88, -0.09),
+            new THREE.Vector3(stemLeanX * 1.2, stemH * 0.95, -0.18),
+          ]);
+          const stemMesh = new THREE.Mesh(
+            new THREE.TubeGeometry(stemCurve, 14, 0.0055, 6, false),
+            lilyStemMat
+          );
+          clusterGroup.add(stemMesh);
+
+          const bellCount = st === 0 ? 6 : 5;
+          for (let b = 0; b < bellCount; b++) {
+            const t = 0.48 + (b / (bellCount - 1)) * 0.50;
+            const pt = stemCurve.getPoint(t);
+            const bellHolder = new THREE.Group();
+            bellHolder.position.set(pt.x, pt.y - 0.028, pt.z - 0.015);
+            bellHolder.rotation.x = 0.16;
+
+            const pedicel = new THREE.Mesh(
+              new THREE.CylinderGeometry(0.002, 0.0025, 0.026, 6),
+              lilyStemMat
+            );
+            pedicel.position.y = 0.036;
+            bellHolder.add(pedicel);
+
+            const bell = new THREE.Mesh(lilyBellGeo, lilyBellMat);
+            bellHolder.add(bell);
+
+            const stamen = new THREE.Mesh(lilyStamenGeo, lilyStamenMat);
+            stamen.position.y = -0.004;
+            bellHolder.add(stamen);
+
+            clusterGroup.add(bellHolder);
+          }
+        }
+
+        exteriorVistaGroup.add(clusterGroup);
+      }
+
+      // Warm low outdoor terrace lantern accents flanking the planter box
+      [PLANTER_X - PLANTER_W / 2 - 0.06, PLANTER_X + PLANTER_W / 2 + 0.06].forEach((lx) => {
+        const lanternPost = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.34, 0.075), railPostMat);
+        lanternPost.position.set(lx, BALC_FLOOR_Y + 0.17, PLANTER_Z);
+        exteriorVistaGroup.add(lanternPost);
+        const lanternGlow = new THREE.Mesh(
+          new THREE.BoxGeometry(0.065, 0.10, 0.065),
+          new THREE.MeshBasicMaterial({ color: 0xfef08a })
+        );
+        lanternGlow.position.set(lx, BALC_FLOOR_Y + 0.28, PLANTER_Z);
+        exteriorVistaGroup.add(lanternGlow);
+      });
+
+      // 6D. Balcony Rocking Chair (陽台搖椅) at X = -1.24, Z = 3.74, angled toward moonlit view & glass table (click to sit)
+      const rockerOuterGroup = new THREE.Group();
+      rockerOuterGroup.position.set(-1.24, BALC_FLOOR_Y, 3.74);
+      rockerOuterGroup.rotation.y = 0.50;
+
+      const rockerPivot = new THREE.Group();
+      balconyRockerPivotRef.current = rockerPivot;
+
+      const rockerWoodMat = new THREE.MeshStandardMaterial({
+        map: lightWoodBaseTex,
+        color: 0xc28f61,
+        roughness: 0.48,
+        metalness: 0.04,
+      });
+      const rockerCushionMat = new THREE.MeshPhysicalMaterial({
+        color: 0xf1f5f9,
+        roughness: 0.88,
+        sheen: 0.65,
+        sheenColor: new THREE.Color(0xffffff),
+      });
+      const rockerPillowMat = new THREE.MeshPhysicalMaterial({
+        color: 0xbae6fd,
+        roughness: 0.86,
+        sheen: 0.68,
+        sheenColor: new THREE.Color(0xe0f2fe),
+      });
+
+      // Two curved solid-wood rocker runners resting tangent to Y = 0
+      [-0.26, 0.26].forEach((rx) => {
+        const runnerCurve = new THREE.CatmullRomCurve3([
+          new THREE.Vector3(rx, 0.076, -0.36),
+          new THREE.Vector3(rx, 0.028, -0.19),
+          new THREE.Vector3(rx, 0.014, 0.0),
+          new THREE.Vector3(rx, 0.028, 0.19),
+          new THREE.Vector3(rx, 0.076, 0.36),
+        ]);
+        const runner = new THREE.Mesh(
+          new THREE.TubeGeometry(runnerCurve, 24, 0.014, 10, false),
+          rockerWoodMat
+        );
+        runner.scale.set(0.85, 1.0, 1.0);
+        runner.castShadow = true;
+        rockerPivot.add(runner);
+
+        // Front & back legs + armrests + backrest posts
+        const frontLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.014, 0.38, 12), rockerWoodMat);
+        frontLeg.position.set(rx, 0.21, 0.20);
+        frontLeg.rotation.x = -0.06;
+        frontLeg.castShadow = true;
+        rockerPivot.add(frontLeg);
+
+        const rearLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.014, 0.37, 12), rockerWoodMat);
+        rearLeg.position.set(rx, 0.205, -0.19);
+        rearLeg.rotation.x = 0.08;
+        rearLeg.castShadow = true;
+        rockerPivot.add(rearLeg);
+
+        const armPost = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.21, 10), rockerWoodMat);
+        armPost.position.set(rx, 0.49, 0.19);
+        armPost.castShadow = true;
+        rockerPivot.add(armPost);
+
+        const armRest = new THREE.Mesh(new THREE.BoxGeometry(0.044, 0.024, 0.44), rockerWoodMat);
+        armRest.position.set(rx, 0.595, -0.01);
+        armRest.rotation.x = 0.05;
+        armRest.castShadow = true;
+        rockerPivot.add(armRest);
+
+        const backPost = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.014, 0.66, 12), rockerWoodMat);
+        backPost.position.set(rx, 0.70, -0.25);
+        backPost.rotation.x = -0.22;
+        backPost.castShadow = true;
+        rockerPivot.add(backPost);
+      });
+
+      // Lower H-stretcher & side rungs
+      const frontStretcher = new THREE.Mesh(new THREE.CylinderGeometry(0.011, 0.011, 0.52, 10), rockerWoodMat);
+      frontStretcher.rotation.z = Math.PI / 2;
+      frontStretcher.position.set(0, 0.16, 0.20);
+      rockerPivot.add(frontStretcher);
+
+      const backStretcher = new THREE.Mesh(new THREE.CylinderGeometry(0.011, 0.011, 0.52, 10), rockerWoodMat);
+      backStretcher.rotation.z = Math.PI / 2;
+      backStretcher.position.set(0, 0.15, -0.19);
+      rockerPivot.add(backStretcher);
+
+      // Ergonomic slatted seat frame + plush cushion + sky-blue throw pillow
+      const seatFrame = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.032, 0.47), rockerWoodMat);
+      seatFrame.position.set(0, 0.385, 0.01);
+      seatFrame.rotation.x = -0.05;
+      seatFrame.castShadow = true;
+      rockerPivot.add(seatFrame);
+
+      const seatCushion = new THREE.Mesh(new THREE.BoxGeometry(0.49, 0.056, 0.43), rockerCushionMat);
+      seatCushion.position.set(0, 0.425, 0.018);
+      seatCushion.rotation.x = -0.05;
+      seatCushion.castShadow = true;
+      rockerPivot.add(seatCushion);
+
+      const lumbarPillow = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, 0.23, 6, 12), rockerPillowMat);
+      lumbarPillow.rotation.z = Math.PI / 2;
+      lumbarPillow.rotation.x = -0.22;
+      lumbarPillow.scale.set(1.0, 1.0, 0.56);
+      lumbarPillow.position.set(0, 0.54, -0.13);
+      lumbarPillow.castShadow = true;
+      rockerPivot.add(lumbarPillow);
+
+      // Curved crest rail + 5 vertical backrest slats
+      const crestRail = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.058, 0.028), rockerWoodMat);
+      crestRail.position.set(0, 0.99, -0.32);
+      crestRail.rotation.x = -0.22;
+      crestRail.castShadow = true;
+      rockerPivot.add(crestRail);
+
+      for (let s = -2; s <= 2; s++) {
+        const slat = new THREE.Mesh(new THREE.BoxGeometry(0.034, 0.54, 0.016), rockerWoodMat);
+        slat.position.set(s * 0.092, 0.69, -0.25);
+        slat.rotation.x = -0.22;
+        slat.castShadow = true;
+        rockerPivot.add(slat);
+      }
+
+      rockerOuterGroup.add(rockerPivot);
+
+      const rockerHitbox = new THREE.Mesh(
+        new THREE.BoxGeometry(0.68, 1.06, 0.80),
+        new THREE.MeshBasicMaterial({ visible: false })
+      );
+      rockerHitbox.name = 'balcony_rocker_hitbox';
+      rockerHitbox.position.set(0, 0.53, 0);
+      balconyRockerHitboxRef.current = rockerHitbox;
+      rockerOuterGroup.add(rockerHitbox);
+
+      exteriorVistaGroup.add(rockerOuterGroup);
+
+      // 6E. Round Tempered-Glass Balcony Side Table + Soft-Pack Tissue Pack (玻璃桌 + 一包衛生紙)
+      const glassTableGroup = new THREE.Group();
+      glassTableGroup.position.set(-0.46, BALC_FLOOR_Y, 3.78);
+
+      const tableMetalMat = new THREE.MeshStandardMaterial({
+        color: 0x1e293b,
+        roughness: 0.30,
+        metalness: 0.84,
+      });
+      const tableBrassMat = new THREE.MeshStandardMaterial({
+        color: 0xd4af37,
+        roughness: 0.26,
+        metalness: 0.88,
+      });
+
+      const TABLE_R = 0.255;
+      const TABLE_H = 0.50;
+      const tableGlassTop = new THREE.Mesh(
+        new THREE.CylinderGeometry(TABLE_R - 0.008, TABLE_R - 0.008, 0.014, 32),
+        new THREE.MeshPhysicalMaterial({
+          color: 0xdbeafe,
+          roughness: 0.04,
+          metalness: 0.05,
+          clearcoat: 1.0,
+          clearcoatRoughness: 0.03,
+          reflectivity: 0.96,
+          transparent: true,
+          opacity: 0.44,
+          depthWrite: false,
+        })
+      );
+      tableGlassTop.position.y = TABLE_H - 0.007;
+      tableGlassTop.renderOrder = 3;
+      glassTableGroup.add(tableGlassTop);
+
+      const tableRim = new THREE.Mesh(new THREE.TorusGeometry(TABLE_R, 0.011, 10, 36), tableMetalMat);
+      tableRim.rotation.x = Math.PI / 2;
+      tableRim.position.y = TABLE_H - 0.007;
+      tableRim.castShadow = true;
+      glassTableGroup.add(tableRim);
+
+      const lowerRing = new THREE.Mesh(new THREE.TorusGeometry(0.175, 0.007, 8, 28), tableMetalMat);
+      lowerRing.rotation.x = Math.PI / 2;
+      lowerRing.position.y = 0.16;
+      glassTableGroup.add(lowerRing);
+
+      for (let lg = 0; lg < 3; lg++) {
+        const ang = (lg / 3) * Math.PI * 2 + 0.35;
+        const topPt = new THREE.Vector3(Math.cos(ang) * 0.145, TABLE_H - 0.012, Math.sin(ang) * 0.145);
+        const botPt = new THREE.Vector3(Math.cos(ang) * 0.205, 0.008, Math.sin(ang) * 0.205);
+        const legCurve = new THREE.LineCurve3(botPt, topPt);
+        const legMesh = new THREE.Mesh(new THREE.TubeGeometry(legCurve, 4, 0.009, 8, false), tableMetalMat);
+        legMesh.castShadow = true;
+        glassTableGroup.add(legMesh);
+
+        const footCap = new THREE.Mesh(new THREE.CylinderGeometry(0.011, 0.013, 0.016, 10), tableBrassMat);
+        footCap.position.set(botPt.x, 0.008, botPt.z);
+        glassTableGroup.add(footCap);
+      }
+
+      // Soft-Pack Facial Tissue Pack (一包衛生紙) resting neatly on the glass tabletop
+      const createTissuePackTex = () => {
+        const c = document.createElement('canvas');
+        c.width = 512;
+        c.height = 512;
+        const ctx = c.getContext('2d');
+        if (ctx) {
+          const grad = ctx.createLinearGradient(0, 0, 512, 512);
+          grad.addColorStop(0, '#f0f9ff');
+          grad.addColorStop(0.55, '#bae6fd');
+          grad.addColorStop(1, '#e0f2fe');
+          ctx.fillStyle = grad;
+          ctx.fillRect(0, 0, 512, 512);
+
+          // Decorative clean white soft border band
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 10;
+          ctx.strokeRect(26, 26, 460, 460);
+
+          // Minimal pastel botanical leaf & blossom emblem
+          ctx.fillStyle = '#0284c7';
+          ctx.font = 'bold 42px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText('PURE SOFT', 256, 185);
+          ctx.fillStyle = '#0369a1';
+          ctx.font = '24px sans-serif';
+          ctx.fillText('3-PLY TISSUES', 256, 335);
+
+          // Center dispensing slit oval graphic
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath();
+          ctx.ellipse(256, 256, 128, 22, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#38bdf8';
+          ctx.lineWidth = 4;
+          ctx.stroke();
+        }
+        const t = new THREE.CanvasTexture(c);
+        t.colorSpace = THREE.SRGBColorSpace;
+        t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        extraRoomTexturesToDispose.push(t);
+        return t;
+      };
+
+      const tissueGroup = new THREE.Group();
+      tissueGroup.position.set(0.01, TABLE_H, -0.01);
+      tissueGroup.rotation.y = -0.28;
+
+      const tissuePackMat = new THREE.MeshPhysicalMaterial({
+        map: createTissuePackTex(),
+        roughness: 0.34,
+        clearcoat: 0.35,
+        clearcoatRoughness: 0.25,
+      });
+      const tissueBody = new THREE.Mesh(new THREE.BoxGeometry(0.185, 0.072, 0.106), tissuePackMat);
+      tissueBody.position.y = 0.036;
+      tissueBody.castShadow = true;
+      tissueGroup.add(tissueBody);
+
+      // Pinched heat-sealed wrapper crimp ends on left/right
+      [-1, 1].forEach((side) => {
+        const crimp = new THREE.Mesh(
+          new THREE.BoxGeometry(0.014, 0.014, 0.104),
+          new THREE.MeshStandardMaterial({ color: 0xe0f2fe, roughness: 0.45 })
+        );
+        crimp.position.set(side * 0.098, 0.032, 0);
+        tissueGroup.add(crimp);
+      });
+
+      // Top opening slot + two delicate white folded tissue sheets peeking up
+      const slitSlot = new THREE.Mesh(
+        new THREE.BoxGeometry(0.088, 0.004, 0.014),
+        new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.85 })
+      );
+      slitSlot.position.set(0, 0.0725, 0);
+      tissueGroup.add(slitSlot);
+
+      const tissuePaperMat = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        roughness: 0.92,
+        side: THREE.DoubleSide,
+      });
+      const tissueSheet1 = new THREE.Mesh(new THREE.PlaneGeometry(0.078, 0.048), tissuePaperMat);
+      tissueSheet1.position.set(-0.004, 0.091, 0.005);
+      tissueSheet1.rotation.set(-0.34, 0.06, -0.10);
+      tissueGroup.add(tissueSheet1);
+
+      const tissueSheet2 = new THREE.Mesh(new THREE.PlaneGeometry(0.072, 0.042), tissuePaperMat);
+      tissueSheet2.position.set(0.005, 0.088, -0.005);
+      tissueSheet2.rotation.set(0.30, -0.08, 0.08);
+      tissueGroup.add(tissueSheet2);
+
+      glassTableGroup.add(tissueGroup);
+      exteriorVistaGroup.add(glassTableGroup);
+
+      // 6F. Three-Tier Short Side Cabinet (1.25m × 0.32m × 1.40m) placed flush along right balcony side (X = +1.80)
+      //     Bottom tier: Folded thick quilt | Middle tier: Folded thin quilt | Upper tier: Potted Lily of the Valley
+      const CAB_W = 1.25; // 1.25m width along right balcony side (Z ∈ [+3.04, +4.29])
+      const CAB_D = 0.32; // 32cm depth (X ∈ [+1.64, +1.96])
+      const CAB_H = 1.40; // 140cm tall
+      const cabWoodT = 0.024;
+      const cabBackT = 0.018;
+
+      const sideCabinetGroup = new THREE.Group();
+      sideCabinetGroup.position.set(1.80, BALC_FLOOR_Y, BATH_D / 2 + CAB_W / 2 + 0.04);
+      sideCabinetGroup.rotation.y = -Math.PI / 2; // Open front faces -X into balcony
+
+      const cabWoodMat = new THREE.MeshStandardMaterial({
+        map: lightWoodBaseTex,
+        color: 0xebd8be,
+        roughness: 0.50,
+      });
+      const cabBackMat = new THREE.MeshStandardMaterial({
+        color: 0xf5efe6,
+        roughness: 0.78,
+      });
+
+      // Left & Right side uprights, Back panel, Top cap, Bottom plinth + 3 tier shelf boards
+      [-1, 1].forEach((side) => {
+        const upright = new THREE.Mesh(new THREE.BoxGeometry(cabWoodT, CAB_H, CAB_D), cabWoodMat);
+        upright.position.set(side * (CAB_W / 2 - cabWoodT / 2), CAB_H / 2, 0);
+        upright.castShadow = true;
+        upright.receiveShadow = true;
+        sideCabinetGroup.add(upright);
+      });
+
+      const cabBack = new THREE.Mesh(new THREE.BoxGeometry(CAB_W - cabWoodT * 2, CAB_H - 0.03, cabBackT), cabBackMat);
+      cabBack.position.set(0, CAB_H / 2, -CAB_D / 2 + cabBackT / 2);
+      cabBack.receiveShadow = true;
+      sideCabinetGroup.add(cabBack);
+
+      const cabTop = new THREE.Mesh(new THREE.BoxGeometry(CAB_W, 0.026, CAB_D), cabWoodMat);
+      cabTop.position.set(0, CAB_H - 0.013, 0);
+      cabTop.castShadow = true;
+      sideCabinetGroup.add(cabTop);
+
+      const cabPlinth = new THREE.Mesh(new THREE.BoxGeometry(CAB_W - cabWoodT * 2, 0.055, CAB_D - 0.02), cabWoodMat);
+      cabPlinth.position.set(0, 0.0275, -0.005);
+      sideCabinetGroup.add(cabPlinth);
+
+      const innerShelfW = CAB_W - cabWoodT * 2;
+      const innerShelfD = CAB_D - cabBackT;
+      const TIER1_FLOOR_Y = 0.079; // Bottom shelf top
+      const TIER2_FLOOR_Y = 0.572; // Middle shelf top
+      const TIER3_FLOOR_Y = 1.012; // Upper shelf top
+
+      [TIER1_FLOOR_Y - 0.012, TIER2_FLOOR_Y - 0.012, TIER3_FLOOR_Y - 0.012].forEach((sy) => {
+        const shelfBoard = new THREE.Mesh(new THREE.BoxGeometry(innerShelfW, 0.024, innerShelfD), cabWoodMat);
+        shelfBoard.position.set(0, sy, cabBackT / 2);
+        shelfBoard.castShadow = true;
+        shelfBoard.receiveShadow = true;
+        sideCabinetGroup.add(shelfBoard);
+      });
+
+      // Bottom Tier (最下層): One neatly folded thick quilt (疊好的厚被子一床)
+      const thickQuiltGroup = new THREE.Group();
+      thickQuiltGroup.position.set(0, TIER1_FLOOR_Y, 0.01);
+      const thickQuiltMat = new THREE.MeshPhysicalMaterial({
+        color: 0xf7efe3,
+        roughness: 0.90,
+        sheen: 0.68,
+        sheenColor: new THREE.Color(0xffffff),
+      });
+      const thickTrimMat = new THREE.MeshPhysicalMaterial({
+        color: 0xd8c3a5,
+        roughness: 0.88,
+        sheen: 0.5,
+      });
+
+      const layerH = 0.076;
+      const quiltW = 0.68;
+      const quiltD = 0.24;
+      for (let ql = 0; ql < 3; ql++) {
+        const ly = layerH / 2 + ql * (layerH - 0.004);
+        const pad = new THREE.Mesh(new THREE.BoxGeometry(quiltW, layerH, quiltD), thickQuiltMat);
+        pad.position.y = ly;
+        pad.castShadow = true;
+        thickQuiltGroup.add(pad);
+
+        // Rounded quilted edge bolster along front & ends
+        const frontRoll = new THREE.Mesh(new THREE.CylinderGeometry(layerH * 0.48, layerH * 0.48, quiltW, 12), thickQuiltMat);
+        frontRoll.rotation.z = Math.PI / 2;
+        frontRoll.position.set(0, ly, quiltD / 2);
+        thickQuiltGroup.add(frontRoll);
+
+        if (ql < 2) {
+          // Smooth U-fold wrap connecting consecutive layers on alternating left/right ends
+          const foldSide = ql % 2 === 0 ? -1 : 1;
+          const uFold = new THREE.Mesh(new THREE.CylinderGeometry(layerH * 0.92, layerH * 0.92, quiltD, 14), thickQuiltMat);
+          uFold.rotation.x = Math.PI / 2;
+          uFold.position.set(foldSide * (quiltW / 2), ly + layerH * 0.48, 0);
+          thickQuiltGroup.add(uFold);
+        }
+      }
+      // Subtle stitched quilting seam & cotton binding band
+      const thickBelt = new THREE.Mesh(new THREE.BoxGeometry(0.06, layerH * 2.95, quiltD + 0.02), thickTrimMat);
+      thickBelt.position.set(0, layerH * 1.46, 0.004);
+      thickQuiltGroup.add(thickBelt);
+      sideCabinetGroup.add(thickQuiltGroup);
+
+      // Middle Tier (中層): One neatly folded thin quilt (疊好的薄被子一床)
+      const thinQuiltGroup = new THREE.Group();
+      thinQuiltGroup.position.set(0, TIER2_FLOOR_Y, 0.01);
+      const thinQuiltMat = new THREE.MeshPhysicalMaterial({
+        color: 0xdbeafe,
+        roughness: 0.86,
+        sheen: 0.60,
+        sheenColor: new THREE.Color(0xf0f9ff),
+      });
+      const thinEdgeMat = new THREE.MeshPhysicalMaterial({
+        color: 0x93c5fd,
+        roughness: 0.85,
+      });
+
+      const thinLayerH = 0.038;
+      const thinW = 0.64;
+      const thinD = 0.23;
+      for (let ql = 0; ql < 3; ql++) {
+        const ly = thinLayerH / 2 + ql * (thinLayerH - 0.002);
+        const pad = new THREE.Mesh(new THREE.BoxGeometry(thinW, thinLayerH, thinD), thinQuiltMat);
+        pad.position.y = ly;
+        pad.castShadow = true;
+        thinQuiltGroup.add(pad);
+
+        const frontEdge = new THREE.Mesh(new THREE.CylinderGeometry(thinLayerH * 0.46, thinLayerH * 0.46, thinW, 10), thinEdgeMat);
+        frontEdge.rotation.z = Math.PI / 2;
+        frontEdge.position.set(0, ly, thinD / 2);
+        thinQuiltGroup.add(frontEdge);
+
+        if (ql < 2) {
+          const foldSide = ql % 2 === 0 ? 1 : -1;
+          const uFold = new THREE.Mesh(new THREE.CylinderGeometry(thinLayerH * 0.90, thinLayerH * 0.90, thinD, 12), thinQuiltMat);
+          uFold.rotation.x = Math.PI / 2;
+          uFold.position.set(foldSide * (thinW / 2), ly + thinLayerH * 0.48, 0);
+          thinQuiltGroup.add(uFold);
+        }
+      }
+      sideCabinetGroup.add(thinQuiltGroup);
+
+      // Upper Tier (上層): One potted Lily of the Valley (一盆鈴蘭花)
+      const cabLilyPotGroup = new THREE.Group();
+      cabLilyPotGroup.position.set(0, TIER3_FLOOR_Y, 0.015);
+
+      const potBodyMat = new THREE.MeshPhysicalMaterial({
+        color: 0xf8fafc,
+        roughness: 0.34,
+        clearcoat: 0.55,
+      });
+      const potBody = new THREE.Mesh(new THREE.CylinderGeometry(0.084, 0.064, 0.102, 22), potBodyMat);
+      potBody.position.y = 0.051;
+      potBody.castShadow = true;
+      cabLilyPotGroup.add(potBody);
+
+      const potRim = new THREE.Mesh(new THREE.CylinderGeometry(0.090, 0.087, 0.018, 22), potBodyMat);
+      potRim.position.y = 0.098;
+      cabLilyPotGroup.add(potRim);
+
+      const potSoil = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.078, 0.078, 0.010, 18),
+        new THREE.MeshStandardMaterial({ color: 0x2b211a, roughness: 0.95 })
+      );
+      potSoil.position.y = 0.099;
+      cabLilyPotGroup.add(potSoil);
+
+      // 5 upright lance-shaped leaves + 3 arching racemes of light-blue bell blossoms inside pot
+      const potLilyBellMat = new THREE.MeshPhysicalMaterial({
+        color: 0x7dd3fc,
+        emissive: 0x38bdf8,
+        emissiveIntensity: 0.28,
+        roughness: 0.26,
+        clearcoat: 0.45,
+        side: THREE.DoubleSide,
+      });
+
+      for (let lf = 0; lf < 5; lf++) {
+        const ang = (lf / 5) * Math.PI * 2;
+        const leaf = new THREE.Mesh(lilyLeafGeo, lf % 2 === 0 ? lilyLeafMat : lilyLeafLightMat);
+        leaf.scale.set(0.32, 1.35, 0.09);
+        leaf.position.set(Math.cos(ang) * 0.032, 0.175, Math.sin(ang) * 0.032);
+        leaf.rotation.set(Math.sin(ang) * 0.25, ang, -Math.cos(ang) * 0.28);
+        cabLilyPotGroup.add(leaf);
+      }
+
+      for (let st = 0; st < 3; st++) {
+        const stAng = (st / 3) * Math.PI * 2 + 0.4;
+        const dx = Math.cos(stAng);
+        const dz = Math.sin(stAng);
+        const potStemCurve = new THREE.CatmullRomCurve3([
+          new THREE.Vector3(dx * 0.01, 0.10, dz * 0.01),
+          new THREE.Vector3(dx * 0.025, 0.21, dz * 0.025),
+          new THREE.Vector3(dx * 0.055, 0.28, dz * 0.055),
+          new THREE.Vector3(dx * 0.095, 0.29, dz * 0.095),
+        ]);
+        const potStem = new THREE.Mesh(new THREE.TubeGeometry(potStemCurve, 12, 0.0038, 6, false), lilyStemMat);
+        cabLilyPotGroup.add(potStem);
+
+        for (let b = 0; b < 4; b++) {
+          const t = 0.46 + (b / 3) * 0.50;
+          const pt = potStemCurve.getPoint(t);
+          const bellHolder = new THREE.Group();
+          bellHolder.position.set(pt.x, pt.y - 0.020, pt.z);
+          bellHolder.scale.setScalar(0.72);
+
+          const pedicel = new THREE.Mesh(new THREE.CylinderGeometry(0.002, 0.0025, 0.024, 6), lilyStemMat);
+          pedicel.position.y = 0.032;
+          bellHolder.add(pedicel);
+
+          bellHolder.add(new THREE.Mesh(lilyBellGeo, potLilyBellMat));
+          const stamen = new THREE.Mesh(lilyStamenGeo, lilyStamenMat);
+          stamen.position.y = -0.004;
+          bellHolder.add(stamen);
+
+          cabLilyPotGroup.add(bellHolder);
+        }
+      }
+
+      sideCabinetGroup.add(cabLilyPotGroup);
+      exteriorVistaGroup.add(sideCabinetGroup);
+
+      // Cozy warm balcony soffit light illuminating the rocking chair, glass table, tissue pack, & 3-tier cabinet
+      const balconyWarmLight = new THREE.PointLight(0xfff1d6, 1.25, 8.5, 1.08);
+      balconyWarmLight.position.set(0.25, 2.55, 3.60);
+      exteriorVistaGroup.add(balconyWarmLight);
+
+      // Panoramic Starry Twilight Sky & City Skyline Backdrop outside the 4m window (+Z direction)
+      const createTwilightVistaTex = () => {
+        const c = document.createElement('canvas');
+        c.width = 1024;
+        c.height = 512;
+        const ctx = c.getContext('2d');
+        if (ctx) {
+          const skyGrad = ctx.createLinearGradient(0, 0, 0, 512);
+          skyGrad.addColorStop(0.0, '#091428');
+          skyGrad.addColorStop(0.45, '#152c52');
+          skyGrad.addColorStop(0.75, '#2b4c7e');
+          skyGrad.addColorStop(1.0, '#4f4868');
+          ctx.fillStyle = skyGrad;
+          ctx.fillRect(0, 0, 1024, 512);
+
+          // Stars
+          for (let i = 0; i < 180; i++) {
+            const sx = (Math.sin(i * 91.7) * 0.5 + 0.5) * 1024;
+            const sy = (Math.cos(i * 37.3) * 0.5 + 0.5) * 290;
+            const r = (i % 5 === 0) ? 1.8 : 0.9;
+            ctx.fillStyle = `rgba(240, 248, 255, ${0.4 + (i % 6) * 0.1})`;
+            ctx.beginPath();
+            ctx.arc(sx, sy, r, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          // Soft luminous full moon + halo
+          const moonX = 560;
+          const moonY = 128;
+          const halo = ctx.createRadialGradient(moonX, moonY, 18, moonX, moonY, 110);
+          halo.addColorStop(0, 'rgba(224, 242, 254, 0.65)');
+          halo.addColorStop(0.4, 'rgba(147, 197, 253, 0.22)');
+          halo.addColorStop(1, 'rgba(147, 197, 253, 0)');
+          ctx.fillStyle = halo;
+          ctx.beginPath();
+          ctx.arc(moonX, moonY, 110, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = '#f8fafc';
+          ctx.beginPath();
+          ctx.arc(moonX, moonY, 26, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Distant misty mountain ridge
+          ctx.fillStyle = '#182844';
+          ctx.beginPath();
+          ctx.moveTo(0, 410);
+          for (let x = 0; x <= 1024; x += 64) {
+            const y = 360 - Math.sin(x * 0.008) * 32 - Math.cos(x * 0.017) * 18;
+            ctx.lineTo(x, y);
+          }
+          ctx.lineTo(1024, 512);
+          ctx.lineTo(0, 512);
+          ctx.closePath();
+          ctx.fill();
+
+          // Soft evening city silhouettes & warm glowing distant apartment windows
+          for (let b = 0; b < 24; b++) {
+            const bx = b * 44;
+            const bw = 36 + (b % 3) * 8;
+            const bh = 65 + ((b * 31) % 75);
+            const by = 512 - bh;
+            ctx.fillStyle = '#0f1b30';
+            ctx.fillRect(bx, by, bw, bh);
+            for (let wy = by + 10; wy < 495; wy += 14) {
+              for (let wx = bx + 6; wx < bx + bw - 8; wx += 10) {
+                if (((wx * 13 + wy * 7) % 11) < 4) {
+                  ctx.fillStyle = ((wx + wy) % 3 === 0) ? 'rgba(253, 224, 138, 0.78)' : 'rgba(186, 230, 253, 0.55)';
+                  ctx.fillRect(wx, wy, 4, 6);
+                }
+              }
+            }
+          }
+        }
+        const t = new THREE.CanvasTexture(c);
+        t.colorSpace = THREE.SRGBColorSpace;
+        t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        extraRoomTexturesToDispose.push(t);
+        return t;
+      };
+
+      const skyVistaWall = new THREE.Mesh(
+        new THREE.CylinderGeometry(7.2, 7.2, 8.4, 36, 1, true, -Math.PI * 0.42, Math.PI * 0.84),
+        new THREE.MeshBasicMaterial({ map: createTwilightVistaTex(), side: THREE.BackSide, fog: false })
+      );
+      skyVistaWall.position.set(0, 2.2, 2.6);
+      exteriorVistaGroup.add(skyVistaWall);
+
+      const skyVistaTopCap = new THREE.Mesh(
+        new THREE.CircleGeometry(7.25, 36),
+        new THREE.MeshBasicMaterial({ color: 0x091428, side: THREE.DoubleSide, fog: false })
+      );
+      skyVistaTopCap.rotation.x = Math.PI / 2;
+      skyVistaTopCap.position.set(0, 6.4, 2.6);
+      exteriorVistaGroup.add(skyVistaTopCap);
+
+      const skyVistaFloorCap = new THREE.Mesh(
+        new THREE.CircleGeometry(7.25, 36),
+        new THREE.MeshBasicMaterial({ color: 0x0c1628, side: THREE.DoubleSide, fog: false })
+      );
+      skyVistaFloorCap.rotation.x = -Math.PI / 2;
+      skyVistaFloorCap.position.set(0, -2.0, 2.6);
+      exteriorVistaGroup.add(skyVistaFloorCap);
+
+      bathGroup.add(exteriorVistaGroup);
+
+      // 7. Floating White Oak & Ceramic Vanity Sink + Circular Backlit Mirror on Side Wall (X = -2.0, Z = -0.55)
+      const vanityGroup = new THREE.Group();
+      vanityGroup.position.set(-BATH_W / 2, 0, -0.55);
+      vanityGroup.rotation.y = Math.PI / 2;
+
+      const vanityWoodMat = new THREE.MeshStandardMaterial({
+        map: lightWoodBaseTex,
+        color: 0xf1e6d6,
+        roughness: 0.48,
+      });
+      const vanityCabinet = new THREE.Mesh(
+        new THREE.BoxGeometry(0.96, 0.42, 0.48),
+        vanityWoodMat
+      );
+      vanityCabinet.position.set(0, 0.62, 0.24);
+      vanityCabinet.castShadow = true;
+      vanityCabinet.receiveShadow = true;
+      vanityGroup.add(vanityCabinet);
+
+      const vanityCounter = new THREE.Mesh(
+        new THREE.BoxGeometry(0.98, 0.045, 0.50),
+        tubPorcelainMat
+      );
+      vanityCounter.position.set(0, 0.852, 0.25);
+      vanityCounter.castShadow = true;
+      vanityGroup.add(vanityCounter);
+
+      const sinkBasin = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.21, 0.17, 0.11, 24),
+        tubPorcelainMat
+      );
+      sinkBasin.scale.set(1.24, 1.0, 0.88);
+      sinkBasin.position.set(0, 0.91, 0.26);
+      sinkBasin.castShadow = true;
+      vanityGroup.add(sinkBasin);
+
+      const sinkFaucetPost = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.014, 0.016, 0.14, 12),
+        tubChromeMat
+      );
+      sinkFaucetPost.position.set(0, 0.94, 0.07);
+      vanityGroup.add(sinkFaucetPost);
+
+      const sinkFaucetNozzle = new THREE.Mesh(
+        new THREE.BoxGeometry(0.022, 0.016, 0.11),
+        tubChromeMat
+      );
+      sinkFaucetNozzle.position.set(0, 1.00, 0.12);
+      vanityGroup.add(sinkFaucetNozzle);
+
+      // Circular Mirror + Soft Warm LED Halo on Wall above Vanity
+      const mirrorHalo = new THREE.Mesh(
+        new THREE.TorusGeometry(0.40, 0.013, 10, 36),
+        new THREE.MeshBasicMaterial({ color: 0xfff5e4 })
+      );
+      mirrorHalo.position.set(0, 1.52, 0.012);
+      vanityGroup.add(mirrorHalo);
+
+      const mirrorGlass = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.39, 0.39, 0.014, 36),
+        new THREE.MeshPhysicalMaterial({
+          color: 0xdbeafe,
+          roughness: 0.05,
+          metalness: 0.86,
+          clearcoat: 1.0,
+          envMapIntensity: 1.55,
+        })
+      );
+      mirrorGlass.rotation.x = Math.PI / 2;
+      mirrorGlass.position.set(0, 1.52, 0.015);
+      vanityGroup.add(mirrorGlass);
+
+      bathGroup.add(vanityGroup);
+
+      // 7B. Spa Ceramic Potted Plant on Right Side near Bathtub (X = +1.66, Z = +1.38)
+      const spaPlantPot = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.16, 0.12, 0.28, 18),
+        new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.42 })
+      );
+      spaPlantPot.position.set(1.66, 0.14, 1.38);
+      spaPlantPot.castShadow = true;
+      bathGroup.add(spaPlantPot);
+      for (let leafIdx = 0; leafIdx < 6; leafIdx++) {
+        const angle = (leafIdx / 6) * Math.PI * 2;
+        const frond = new THREE.Mesh(
+          new THREE.SphereGeometry(0.14, 10, 8),
+          new THREE.MeshStandardMaterial({ color: leafIdx % 2 === 0 ? 0x3b7a57 : 0x2f6b47, roughness: 0.58 })
+        );
+        frond.scale.set(0.75, 1.85, 0.35);
+        frond.position.set(1.66 + Math.cos(angle) * 0.11, 0.38 + (leafIdx % 2) * 0.08, 1.38 + Math.sin(angle) * 0.11);
+        frond.rotation.set(Math.sin(angle) * 0.45, angle, Math.cos(angle) * 0.45);
+        bathGroup.add(frond);
+      }
+
+      // 8. Compact Modern White Ceramic Toilet on Front Wall beside Door (X = +0.92, Z = -2.66)
+      const toiletGroup = new THREE.Group();
+      toiletGroup.position.set(0.92, 0, -BATH_D / 2 + 0.34);
+
+      const toiletPedestal = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.16, 0.13, 0.36, 20),
+        tubPorcelainMat
+      );
+      toiletPedestal.scale.set(1.0, 1.0, 1.32);
+      toiletPedestal.position.set(0, 0.18, 0.05);
+      toiletPedestal.castShadow = true;
+      toiletGroup.add(toiletPedestal);
+
+      const toiletBowlRim = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.195, 0.175, 0.06, 24),
+        tubPorcelainMat
+      );
+      toiletBowlRim.scale.set(1.0, 1.0, 1.34);
+      toiletBowlRim.position.set(0, 0.38, 0.05);
+      toiletBowlRim.castShadow = true;
+      toiletGroup.add(toiletBowlRim);
+
+      const toiletLid = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.185, 0.185, 0.022, 24),
+        tubPorcelainMat
+      );
+      toiletLid.scale.set(1.0, 1.0, 1.28);
+      toiletLid.position.set(0, 0.42, 0.05);
+      toiletGroup.add(toiletLid);
+
+      const toiletTank = new THREE.Mesh(
+        new THREE.BoxGeometry(0.38, 0.36, 0.17),
+        tubPorcelainMat
+      );
+      toiletTank.position.set(0, 0.56, -0.18);
+      toiletTank.castShadow = true;
+      toiletGroup.add(toiletTank);
+
+      const flushBtn = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.022, 0.022, 0.012, 14),
+        tubChromeMat
+      );
+      flushBtn.position.set(0, 0.745, -0.18);
+      toiletGroup.add(flushBtn);
+
+      bathGroup.add(toiletGroup);
+
+      // 9. Dual Recessed Overhead Bathroom Ceiling LED Panels + Moonlight Balcony Window Fill & Tub Accent Lighting
+      [-1.15, 1.25].forEach((cz) => {
+        const bathCeilingFrame = new THREE.Mesh(
+          new THREE.BoxGeometry(1.62, 0.028, 0.58),
+          new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.35 })
+        );
+        bathCeilingFrame.position.set(0, BATH_H - 0.014, cz);
+        bathGroup.add(bathCeilingFrame);
+
+        const bathCeilingGlow = new THREE.Mesh(
+          new THREE.PlaneGeometry(1.52, 0.48),
+          new THREE.MeshBasicMaterial({ color: 0xf8fcff })
+        );
+        bathCeilingGlow.rotation.x = Math.PI / 2;
+        bathCeilingGlow.position.set(0, BATH_H - 0.030, cz);
+        bathGroup.add(bathCeilingGlow);
+      });
+
+      const bathMainLight = new THREE.PointLight(0xf6fbff, 2.15, 18, 1.05);
+      bathMainLight.position.set(0, BATH_H - 0.25, -0.55);
+      bathMainLight.castShadow = true;
+      bathMainLight.shadow.mapSize.width = 1024;
+      bathMainLight.shadow.mapSize.height = 1024;
+      bathMainLight.shadow.bias = -0.0008;
+      bathGroup.add(bathMainLight);
+
+      const bathTubLight = new THREE.PointLight(0xe0f2fe, 1.15, 10, 1.10);
+      bathTubLight.position.set(0, 2.30, 2.05);
+      bathGroup.add(bathTubLight);
+
+      const bathWindowLight = new THREE.PointLight(0x93c5fd, 1.25, 12, 1.05);
+      bathWindowLight.position.set(0, 1.85, BATH_D / 2 + 0.75);
+      bathGroup.add(bathWindowLight);
+
+      const bathDoorLight = new THREE.PointLight(0xfff4e6, 0.85, 9, 1.15);
+      bathDoorLight.position.set(BATH_DOOR_X, 2.20, -2.10);
+      bathGroup.add(bathDoorLight);
+
+      scene.add(bathGroup);
+    };
+
+    buildBathroomRoom();
+
     // --- 6. ANIMATION & RENDER LOOP ---
     let animationId: number;
     const clock = new THREE.Clock();
@@ -12000,33 +15691,48 @@ export const Room3DScene: React.FC = () => {
     const DOOR_VIEW_POS = new THREE.Vector3(-3.65, 1.28, -1.62);
     const CYAN_DOOR2_VIEW_POS = new THREE.Vector3(5.12, 1.28, CY_CENTER_Z);
     const ROOM_CENTER_POS = new THREE.Vector3(PR_CENTER_X, 1.38, 0);
+    const BATH_DOOR_VIEW_POS = new THREE.Vector3(BATH_DOOR_X, 1.28, -1.55);
+    const BATH_CENTER_POS = new THREE.Vector3(0, 1.40, -1.05);
+    const BATH_TUB_VIEW_POS = new THREE.Vector3(-0.78, 0.94, 2.36);
+    const BATH_BALCONY_VIEW_POS = new THREE.Vector3(0.78, 1.30, 3.44);
+    const BATH_CHAIR_VIEW_POS = new THREE.Vector3(-1.27, 0.93, 3.69);
     const PINK_DESK_VIEW_POS = new THREE.Vector3(0.76, 1.30, -2.18);
     const PINK_CAPSULE_VIEW_POS = new THREE.Vector3(-4.36, 1.78, 2.95);
     const PINK_BOARD_VIEW_POS = new THREE.Vector3(-1.72, 1.28, 1.96);
     const PINK_SHOWCASE_VIEW_POS = new THREE.Vector3(-0.44, 1.15, 0.72);
+    const PINK_SECRET_VIEW_POS = new THREE.Vector3(-8.85, 1.32, 0.20);
 
     const renderLoop = () => {
       const delta = Math.min(clock.getDelta(), 0.1);
 
-      // Smoothly move camera between tea table, 6-tier cabinet, doors, desk, capsule pod, corkboard, showcase cabinets, and center of colored rooms
+      // Smoothly move camera between tea table, 6-tier cabinet, doors, desk, capsule pod, corkboard, showcase cabinets, secret room, bathroom/tub/balcony/chair, and center of colored rooms
+      const isBath = activeRoomRef.current === 'bathroom';
       const targetPos =
-        viewLocationRef.current === 'cabinet'
-          ? CABINET_VIEW_POS
-          : viewLocationRef.current === 'door'
-            ? DOOR_VIEW_POS
-            : viewLocationRef.current === 'door2'
-              ? CYAN_DOOR2_VIEW_POS
-              : viewLocationRef.current === 'center'
-                ? ROOM_CENTER_POS
-                : viewLocationRef.current === 'desk'
-                  ? PINK_DESK_VIEW_POS
-                  : viewLocationRef.current === 'capsule'
-                    ? PINK_CAPSULE_VIEW_POS
-                    : viewLocationRef.current === 'board'
-                      ? PINK_BOARD_VIEW_POS
-                      : viewLocationRef.current === 'showcase'
-                        ? PINK_SHOWCASE_VIEW_POS
-                        : TABLE_VIEW_POS;
+        viewLocationRef.current === 'secret'
+          ? PINK_SECRET_VIEW_POS
+          : viewLocationRef.current === 'cabinet'
+            ? CABINET_VIEW_POS
+            : viewLocationRef.current === 'door'
+              ? (isBath ? BATH_DOOR_VIEW_POS : DOOR_VIEW_POS)
+              : viewLocationRef.current === 'door2'
+                ? CYAN_DOOR2_VIEW_POS
+                : viewLocationRef.current === 'center'
+                  ? (isBath ? BATH_CENTER_POS : ROOM_CENTER_POS)
+                  : viewLocationRef.current === 'tub'
+                    ? BATH_TUB_VIEW_POS
+                    : viewLocationRef.current === 'balcony'
+                      ? BATH_BALCONY_VIEW_POS
+                      : viewLocationRef.current === 'chair'
+                        ? BATH_CHAIR_VIEW_POS
+                        : viewLocationRef.current === 'desk'
+                          ? PINK_DESK_VIEW_POS
+                          : viewLocationRef.current === 'capsule'
+                            ? PINK_CAPSULE_VIEW_POS
+                            : viewLocationRef.current === 'board'
+                              ? PINK_BOARD_VIEW_POS
+                              : viewLocationRef.current === 'showcase'
+                                ? PINK_SHOWCASE_VIEW_POS
+                                : TABLE_VIEW_POS;
       playerPosRef.current.x = THREE.MathUtils.damp(playerPosRef.current.x, targetPos.x, 4.6, delta);
       playerPosRef.current.y = THREE.MathUtils.damp(playerPosRef.current.y, targetPos.y, 4.6, delta);
       playerPosRef.current.z = THREE.MathUtils.damp(playerPosRef.current.z, targetPos.z, 4.6, delta);
@@ -12038,6 +15744,23 @@ export const Room3DScene: React.FC = () => {
       camera.rotation.y = cameraYawRef.current;
       camera.rotation.x = cameraPitchRef.current;
       camera.updateMatrixWorld();
+
+      // Smooth damped sliding animation for Bathroom 4m Floor-to-Ceiling Window & gentle balcony rocking chair sway
+      if (bathWindowLeftLeafRef.current && bathWindowRightLeafRef.current) {
+        const targetSlide = bathWindowOpenRef.current ? 1 : 0;
+        bathWindowSlideProgressRef.current = THREE.MathUtils.damp(
+          bathWindowSlideProgressRef.current,
+          targetSlide,
+          7.5,
+          delta
+        );
+        const slideOffset = bathWindowSlideProgressRef.current * 0.94;
+        bathWindowLeftLeafRef.current.position.x = -slideOffset;
+        bathWindowRightLeafRef.current.position.x = slideOffset;
+      }
+      if (balconyRockerPivotRef.current && isBath) {
+        balconyRockerPivotRef.current.rotation.x = Math.sin(clock.elapsedTime * 1.1) * 0.014;
+      }
 
       // Smooth clockwise damped rotation for Lobby & Colored Rooms' steampunk pointers & outer gear rings
       if (portalWheelRef.current) {
@@ -12061,7 +15784,7 @@ export const Room3DScene: React.FC = () => {
           }
         }
       };
-      (['purple', 'green', 'gold', 'pink', 'cyan', 'cyan_b1', 'royalblue', 'brown'] as const).forEach((roomId) => {
+      (['purple', 'green', 'gold', 'pink', 'cyan', 'cyan_b1', 'royalblue', 'brown', 'bathroom'] as const).forEach((roomId) => {
         animateDialState(extraRoomsRef.current[roomId]);
       });
       animateDialState(cyanFarDoorRef.current);
@@ -12077,6 +15800,114 @@ export const Room3DScene: React.FC = () => {
           delta
         );
         beybladeLid1PivotRef.current.rotation.x = beybladeLid1AngleRef.current;
+      }
+
+      // Pink Room Recessed Bookcase Tier-3 Yellow Book (3-click pull-out off control lever) & Lever Pivot
+      if (
+        yellowBookGroupRef.current &&
+        yellowBookRestPosRef.current &&
+        yellowBookOutPosRef.current
+      ) {
+        const restPos = yellowBookRestPosRef.current;
+        const outPos = yellowBookOutPosRef.current;
+        const clicks = yellowBookClickCountRef.current;
+
+        if (clicks >= 3) {
+          yellowBookExtractProgRef.current = Math.min(1, yellowBookExtractProgRef.current + delta / 0.65);
+        } else {
+          yellowBookExtractProgRef.current = Math.max(0, yellowBookExtractProgRef.current - delta / 0.55);
+        }
+
+        const ext = yellowBookExtractProgRef.current;
+        if (ext <= 0.0001 && clicks < 3) {
+          const targetStagePull = clicks === 1 ? 0.036 : clicks === 2 ? 0.095 : 0;
+          yellowBookStagePullRef.current = THREE.MathUtils.damp(
+            yellowBookStagePullRef.current,
+            targetStagePull,
+            11.0,
+            delta
+          );
+          const pullAmt = yellowBookStagePullRef.current;
+          yellowBookGroupRef.current.position.set(restPos.x, restPos.y, restPos.z + pullAmt);
+          yellowBookGroupRef.current.rotation.set(pullAmt * 0.45, 0, 0);
+        } else {
+          // Phase A (0..0.38): slide straight forward off the lever; Phase B (0.38..1): arc smoothly onto floor
+          const clearZ = restPos.z + 0.27;
+          if (ext <= 0.38) {
+            const u = ext / 0.38;
+            const easeU = 1 - Math.pow(1 - u, 2.2);
+            const startZ = restPos.z + yellowBookStagePullRef.current;
+            yellowBookGroupRef.current.position.set(
+              restPos.x,
+              restPos.y,
+              THREE.MathUtils.lerp(startZ, clearZ, easeU)
+            );
+            yellowBookGroupRef.current.rotation.set(THREE.MathUtils.lerp(0.05, 0.14, easeU), 0, 0);
+          } else {
+            const v = (ext - 0.38) / 0.62;
+            const easeV = v < 0.5 ? 2 * v * v : 1 - Math.pow(-2 * v + 2, 2) / 2;
+            const arcLift = Math.sin(v * Math.PI) * 0.06;
+            yellowBookGroupRef.current.position.set(
+              THREE.MathUtils.lerp(restPos.x, outPos.x, easeV),
+              THREE.MathUtils.lerp(restPos.y, outPos.y, easeV) + arcLift,
+              THREE.MathUtils.lerp(clearZ, outPos.z, easeV)
+            );
+            yellowBookGroupRef.current.rotation.set(
+              THREE.MathUtils.lerp(0.14, -Math.PI / 2, easeV),
+              0,
+              THREE.MathUtils.lerp(0, 0.18, easeV)
+            );
+          }
+        }
+      }
+
+      if (bookcaseLeverPivotRef.current) {
+        const targetLeverAngle = bookcaseLeverPulledRef.current ? 0.52 : 0;
+        bookcaseLeverAngleRef.current = THREE.MathUtils.damp(
+          bookcaseLeverAngleRef.current,
+          targetLeverAngle,
+          10.5,
+          delta
+        );
+        bookcaseLeverPivotRef.current.rotation.x = bookcaseLeverAngleRef.current;
+      }
+
+      if (secretInsideLeverPivotRef.current) {
+        const targetSecLeverAngle = bookcaseLeverPulledRef.current ? 0.52 : 0;
+        secretInsideLeverPivotRef.current.rotation.x = THREE.MathUtils.damp(
+          secretInsideLeverPivotRef.current.rotation.x,
+          targetSecLeverAngle,
+          10.5,
+          delta
+        );
+      }
+
+      // Smooth bookcase retraction into wall & sinking down into the floor cavity
+      if (recessedBookcaseGroupRef.current) {
+        const targetProg = bookcaseLeverPulledRef.current ? 1.0 : 0.0;
+        if (targetProg > bookcaseRetractProgRef.current) {
+          bookcaseRetractProgRef.current = Math.min(1.0, bookcaseRetractProgRef.current + delta / 0.85);
+        } else {
+          bookcaseRetractProgRef.current = Math.max(0.0, bookcaseRetractProgRef.current - delta / 0.85);
+        }
+
+        const prog = bookcaseRetractProgRef.current;
+        // Phase 1 (0..0.25): Push deeper into wall along -X from -5.0 to -5.175 (centered in wall & hollow pit shaft)
+        // Phase 2 (0.25..1.0): Sink down into floor cavity along -Y from 0.0 to -2.55
+        let curX = -5.0;
+        let curY = 0;
+        if (prog <= 0.25) {
+          const u = prog / 0.25;
+          const easeU = u * u * (3 - 2 * u);
+          curX = -5.0 - 0.175 * easeU;
+          curY = 0;
+        } else {
+          curX = -5.175;
+          const v = (prog - 0.25) / 0.75;
+          const easeV = v * v * (3 - 2 * v);
+          curY = -2.55 * easeV;
+        }
+        recessedBookcaseGroupRef.current.position.set(curX, curY, -1.40);
       }
 
       // Dakimakura 7-click interactive animation inside Pink Room Upper Capsule Pod
@@ -12162,7 +15993,7 @@ export const Room3DScene: React.FC = () => {
         doorRattleTimerRef.current = Math.max(0, doorRattleTimerRef.current - delta);
         const wobble = Math.sin(doorRattleTimerRef.current * 42) * 0.014 * (doorRattleTimerRef.current / 0.35);
         if (lobbyDoorLeafPivotRef.current) lobbyDoorLeafPivotRef.current.rotation.y = wobble;
-        (['purple', 'green', 'gold', 'pink', 'cyan', 'cyan_b1', 'royalblue', 'brown'] as const).forEach((roomId) => {
+        (['purple', 'green', 'gold', 'pink', 'cyan', 'cyan_b1', 'royalblue', 'brown', 'bathroom'] as const).forEach((roomId) => {
           const pivot = extraRoomsRef.current[roomId].doorLeafPivot;
           if (pivot) pivot.rotation.y = wobble;
         });
@@ -12170,7 +16001,7 @@ export const Room3DScene: React.FC = () => {
         if (cyanB1FarDoorRef.current.doorLeafPivot) cyanB1FarDoorRef.current.doorLeafPivot.rotation.y = wobble;
       } else {
         if (lobbyDoorLeafPivotRef.current) lobbyDoorLeafPivotRef.current.rotation.y = 0;
-        (['purple', 'green', 'gold', 'pink', 'cyan', 'cyan_b1', 'royalblue', 'brown'] as const).forEach((roomId) => {
+        (['purple', 'green', 'gold', 'pink', 'cyan', 'cyan_b1', 'royalblue', 'brown', 'bathroom'] as const).forEach((roomId) => {
           const pivot = extraRoomsRef.current[roomId].doorLeafPivot;
           if (pivot) pivot.rotation.y = 0;
         });
@@ -12224,6 +16055,7 @@ export const Room3DScene: React.FC = () => {
       if (portalSwapTimeoutRef.current !== null) window.clearTimeout(portalSwapTimeoutRef.current);
       if (portalFadeEndTimeoutRef.current !== null) window.clearTimeout(portalFadeEndTimeoutRef.current);
       if (dakiSubtitleTimerRef.current !== null) window.clearTimeout(dakiSubtitleTimerRef.current);
+      if (bookcaseAutoResetTimerRef.current !== null) window.clearTimeout(bookcaseAutoResetTimerRef.current);
 
       scene.traverse((obj) => {
         if (obj instanceof THREE.Mesh) {
@@ -12347,7 +16179,12 @@ export const Room3DScene: React.FC = () => {
         roomState.dialLight.color.setHex(isSlotActive ? activeHex : 0x22222c);
         roomState.dialLight.intensity = isSlotActive ? 0.72 : 0.12;
       }
-      if (roomState.plaqueMat && (roomState.plaqueTitles || roomState.defaultPlaqueTitle)) {
+      if (roomState.onPlaqueTitleChange && (roomState.plaqueTitles || roomState.defaultPlaqueTitle)) {
+        const nextTitle = roomState.plaqueTitles?.[nextIdx] ?? roomState.defaultPlaqueTitle;
+        if (nextTitle) {
+          roomState.onPlaqueTitleChange(nextTitle);
+        }
+      } else if (roomState.plaqueMat && (roomState.plaqueTitles || roomState.defaultPlaqueTitle)) {
         const nextTitle = roomState.plaqueTitles?.[nextIdx] ?? roomState.defaultPlaqueTitle;
         const tex = nextTitle ? getCarvedPlaqueTextureRef.current?.(nextTitle) : undefined;
         if (tex) {
@@ -12422,12 +16259,13 @@ export const Room3DScene: React.FC = () => {
       cyan_b1: { name: '地下一樓的門廊', floor: 'B1', bgHex: 0x0c0907, ambientColor: 0xffecd6, ambientIntensity: 0.78, hemiSky: 0xfff5ea, hemiGround: 0x5c686e, hemiIntensity: 0.46, envIntensity: 0.27 },
       royalblue: { name: '寶藍色大廳', floor: '2F', bgHex: 0x0c0907, ambientColor: 0xffecd6, ambientIntensity: 0.78, hemiSky: 0xfff5ea, hemiGround: 0x52607a, hemiIntensity: 0.46, envIntensity: 0.27 },
       brown: { name: '棕色大廳', floor: '2F', bgHex: 0x0c0907, ambientColor: 0xffecd6, ambientIntensity: 0.78, hemiSky: 0xfff5ea, hemiGround: 0x6e5844, hemiIntensity: 0.46, envIntensity: 0.27 },
+      bathroom: { name: '洗手間/浴室', floor: 'B1', bgHex: 0x0e151c, ambientColor: 0xeaf6ff, ambientIntensity: 0.78, hemiSky: 0xf4fbff, hemiGround: 0x6b7c8a, hemiIntensity: 0.46, envIntensity: 0.34 },
     };
 
     // Switch behind-the-door room seamlessly across 1F, 2F & B1 rooms
     const handleEnterPortalRoom = (
       targetRoom: RoomId,
-      spawnView: 'table' | 'door' | 'door2' = 'door'
+      spawnView: 'table' | 'door' | 'door2' | 'center' | 'tub' | 'balcony' | 'chair' = 'door'
     ) => {
       if (portalSwapTimeoutRef.current !== null) window.clearTimeout(portalSwapTimeoutRef.current);
       if (portalFadeEndTimeoutRef.current !== null) window.clearTimeout(portalFadeEndTimeoutRef.current);
@@ -12444,12 +16282,14 @@ export const Room3DScene: React.FC = () => {
         activeRoomRef.current = targetRoom;
         setActiveRoom(targetRoom);
         setIsPinkNavOpen(false);
+        setIsBathNavOpen(false);
+        bathWindowOpenRef.current = false;
         if (targetRoom !== 'pink') {
           setDakiSubtitle(null);
         }
 
         if (lobbyRoomGroupRef.current) lobbyRoomGroupRef.current.visible = isLobby;
-        (['purple', 'green', 'gold', 'pink', 'cyan', 'cyan_b1', 'royalblue', 'brown'] as const).forEach((roomId) => {
+        (['purple', 'green', 'gold', 'pink', 'cyan', 'cyan_b1', 'royalblue', 'brown', 'bathroom'] as const).forEach((roomId) => {
           const rg = extraRoomsRef.current[roomId].roomGroup;
           if (rg) rg.visible = targetRoom === roomId;
         });
@@ -12475,21 +16315,59 @@ export const Room3DScene: React.FC = () => {
 
         viewLocationRef.current = spawnView;
         setViewLocation(spawnView);
-        if (spawnView === 'table') {
+        if (targetRoom === 'bathroom') {
+          if (spawnView === 'chair') {
+            bathWindowOpenRef.current = true;
+            playerPosRef.current.set(-1.27, 0.93, 3.69);
+            targetYawRef.current = Math.PI + 0.50;
+            cameraYawRef.current = Math.PI + 0.50;
+            targetPitchRef.current = -0.10;
+            cameraPitchRef.current = -0.10;
+          } else if (spawnView === 'balcony') {
+            bathWindowOpenRef.current = true;
+            playerPosRef.current.set(0.78, 1.30, 3.44);
+            targetYawRef.current = Math.PI - 0.72;
+            cameraYawRef.current = Math.PI - 0.72;
+            targetPitchRef.current = -0.18;
+            cameraPitchRef.current = -0.18;
+          } else if (spawnView === 'tub') {
+            playerPosRef.current.set(-0.78, 0.94, 2.36);
+            targetYawRef.current = Math.PI - 0.12;
+            cameraYawRef.current = Math.PI - 0.12;
+            targetPitchRef.current = -0.04;
+            cameraPitchRef.current = -0.04;
+          } else if (spawnView === 'center') {
+            playerPosRef.current.set(0, 1.40, -1.05);
+            targetYawRef.current = Math.PI;
+            cameraYawRef.current = Math.PI;
+            targetPitchRef.current = -0.10;
+            cameraPitchRef.current = -0.10;
+          } else {
+            playerPosRef.current.set(-1.10, 1.28, -1.55);
+            targetYawRef.current = CENTER_YAW;
+            cameraYawRef.current = CENTER_YAW;
+            targetPitchRef.current = 0;
+            cameraPitchRef.current = 0;
+          }
+        } else if (spawnView === 'table') {
           playerPosRef.current.set(0, SEATED_HEIGHT, SEATED_Z);
           targetYawRef.current = CENTER_YAW;
           cameraYawRef.current = CENTER_YAW;
+          targetPitchRef.current = 0;
+          cameraPitchRef.current = 0;
         } else if (spawnView === 'door2') {
           playerPosRef.current.set(5.12, 1.28, -1.5);
           targetYawRef.current = -Math.PI / 2;
           cameraYawRef.current = -Math.PI / 2;
+          targetPitchRef.current = 0;
+          cameraPitchRef.current = 0;
         } else {
           playerPosRef.current.set(-3.65, 1.28, -1.62);
           targetYawRef.current = CENTER_YAW;
           cameraYawRef.current = CENTER_YAW;
+          targetPitchRef.current = 0;
+          cameraPitchRef.current = 0;
         }
-        targetPitchRef.current = 0;
-        cameraPitchRef.current = 0;
 
         portalFadeEndTimeoutRef.current = window.setTimeout(() => {
           if (portalVeilRef.current) {
@@ -12617,11 +16495,48 @@ export const Room3DScene: React.FC = () => {
       } else if (currentRoom === 'pink') {
         const doorHitbox = extraRoomsRef.current.pink.doorHitbox;
         if (doorHitbox && raycasterRef.current.intersectObject(doorHitbox, false).length > 0) {
-          // Top (idx 0) is Silver -> returns directly to 地下一樓的門廊 facing Door 2
+          // Top (idx 0) is Silver -> returns to 地下一樓的門廊 facing Door 2
+          // Right (idx 1) is Blue -> enters 洗手間/浴室 ('bathroom')
           if (extraRoomsRef.current.pink.colorIdx === 0) {
             handleEnterPortalRoom('cyan_b1', 'door2');
+          } else if (extraRoomsRef.current.pink.colorIdx === 1) {
+            handleEnterPortalRoom('bathroom', 'door');
           } else {
             triggerLockedRattle();
+          }
+          return true;
+        }
+      } else if (currentRoom === 'bathroom') {
+        const doorHitbox = extraRoomsRef.current.bathroom.doorHitbox;
+        if (doorHitbox && raycasterRef.current.intersectObject(doorHitbox, false).length > 0) {
+          // Top (idx 0) is Silver -> returns to 阿璃的宿舍 ('pink')
+          if (extraRoomsRef.current.bathroom.colorIdx === 0) {
+            handleEnterPortalRoom('pink', 'door');
+          } else {
+            triggerLockedRattle();
+          }
+          return true;
+        }
+        // Balcony Rocking Chair click: sit down in chair when on balcony, or stand up to balcony when seated
+        if (
+          (viewLocationRef.current === 'balcony' || viewLocationRef.current === 'chair') &&
+          balconyRockerHitboxRef.current &&
+          raycasterRef.current.intersectObject(balconyRockerHitboxRef.current, false).length > 0
+        ) {
+          handleSelectBathView(viewLocationRef.current === 'chair' ? 'balcony' : 'chair');
+          return true;
+        }
+        // Bathroom 4m floor-to-ceiling sliding window click: 1st click opens window, 2nd click steps outside onto balcony
+        if (bathWindowHitboxRef.current && raycasterRef.current.intersectObject(bathWindowHitboxRef.current, false).length > 0) {
+          if (!bathWindowOpenRef.current) {
+            bathWindowOpenRef.current = true;
+            if (typeof navigator !== 'undefined' && navigator.vibrate) {
+              try { navigator.vibrate(14); } catch {}
+            }
+          } else if (viewLocationRef.current !== 'balcony' && viewLocationRef.current !== 'chair') {
+            handleSelectBathView('balcony');
+          } else {
+            handleSelectBathView('center');
           }
           return true;
         }
@@ -12706,6 +16621,100 @@ export const Room3DScene: React.FC = () => {
           if (typeof navigator !== 'undefined' && navigator.vibrate) {
             try { navigator.vibrate(14); } catch {}
           }
+          return true;
+        }
+      }
+
+      // 4b-2. Pink Room Recessed Bookcase Tier-3 Extra-Wide Yellow Book (3 clicks to pull out & reveal control lever)
+      if (
+        currentRoom === 'pink' &&
+        viewLocationRef.current !== 'capsule' &&
+        yellowBookHitboxRef.current
+      ) {
+        const ybHits = raycasterRef.current.intersectObject(yellowBookHitboxRef.current, false);
+        if (ybHits.length > 0) {
+          if (yellowBookClickCountRef.current < 3) {
+            yellowBookClickCountRef.current += 1;
+            if (typeof navigator !== 'undefined' && navigator.vibrate) {
+              try {
+                navigator.vibrate(yellowBookClickCountRef.current === 3 ? [15, 25, 15] : 12);
+              } catch {}
+            }
+          } else {
+            yellowBookClickCountRef.current = 0;
+            bookcaseLeverPulledRef.current = false;
+            if (typeof navigator !== 'undefined' && navigator.vibrate) {
+              try { navigator.vibrate(14); } catch {}
+            }
+          }
+          return true;
+        }
+      }
+
+      // 4b-3. Exposed Control Lever behind the yellow book (toggle pull down/up when exposed)
+      if (
+        currentRoom === 'pink' &&
+        viewLocationRef.current !== 'capsule' &&
+        yellowBookClickCountRef.current >= 3 &&
+        bookcaseLeverHitboxRef.current
+      ) {
+        const lvHits = raycasterRef.current.intersectObject(bookcaseLeverHitboxRef.current, false);
+        if (lvHits.length > 0) {
+          bookcaseLeverPulledRef.current = !bookcaseLeverPulledRef.current;
+          if (bookcaseLeverPulledRef.current) {
+            triggerBookcaseAutoReset();
+          }
+          if (typeof navigator !== 'undefined' && navigator.vibrate) {
+            try { navigator.vibrate(18); } catch {}
+          }
+          return true;
+        }
+      }
+
+      // 4b-4. Secret Room Interior Door Control Lever tap (mounted inside the secret room next to doorway)
+      if (
+        currentRoom === 'pink' &&
+        secretInsideLeverHitboxRef.current
+      ) {
+        const secHits = raycasterRef.current.intersectObject(secretInsideLeverHitboxRef.current, false);
+        if (secHits.length > 0) {
+          bookcaseLeverPulledRef.current = !bookcaseLeverPulledRef.current;
+          if (bookcaseLeverPulledRef.current) {
+            triggerBookcaseAutoReset();
+          }
+          if (typeof navigator !== 'undefined' && navigator.vibrate) {
+            try { navigator.vibrate(18); } catch {}
+          }
+          return true;
+        }
+      }
+
+      // 4b-5. 按書櫃背面則走到外面 (When inside secret room, tapping the bookcase back or doorway walks outside)
+      if (
+        currentRoom === 'pink' &&
+        viewLocationRef.current === 'secret' &&
+        (bookcaseBackHitboxRef.current || secretPassageHitboxRef.current)
+      ) {
+        const backHitboxes = [bookcaseBackHitboxRef.current, secretPassageHitboxRef.current].filter(Boolean) as THREE.Mesh[];
+        const backHits = raycasterRef.current.intersectObjects(backHitboxes, false);
+        if (backHits.length > 0) {
+          bookcaseLeverPulledRef.current = true;
+          handleSelectPinkView('door');
+          return true;
+        }
+      }
+
+      // 4b-6. 按密室內部的空間則走到密室裡面 (When outside in Pink Room, tapping open passage or visible secret room interior walks inside)
+      if (
+        currentRoom === 'pink' &&
+        viewLocationRef.current !== 'secret' &&
+        (bookcaseLeverPulledRef.current || bookcaseRetractProgRef.current > 0.35) &&
+        (secretRoomSpaceHitboxRef.current || secretPassageHitboxRef.current)
+      ) {
+        const entryHitboxes = [secretRoomSpaceHitboxRef.current, secretPassageHitboxRef.current].filter(Boolean) as THREE.Mesh[];
+        const entryHits = raycasterRef.current.intersectObjects(entryHitboxes, false);
+        if (entryHits.length > 0) {
+          handleSelectPinkView('secret');
           return true;
         }
       }
@@ -12941,6 +16950,10 @@ export const Room3DScene: React.FC = () => {
       setViewLocation(next);
       targetYawRef.current = CENTER_YAW;
       targetPitchRef.current = 0;
+    } else if (activeRoomRef.current === 'bathroom') {
+      const next: 'door' | 'center' = viewLocationRef.current === 'center' ? 'door' : 'center';
+      handleSelectBathView(next);
+      return;
     } else {
       const next: 'door' | 'center' = viewLocationRef.current === 'center' ? 'door' : 'center';
       viewLocationRef.current = next;
@@ -12953,26 +16966,53 @@ export const Room3DScene: React.FC = () => {
     }
   };
 
-  // Smoothly navigate inside Pink Room (door, desk, corkboard, white showcase cabinets, or upper capsule interior)
-  const handleSelectPinkView = (target: 'door' | 'desk' | 'board' | 'showcase' | 'capsule') => {
+  // Helper: auto-reset the bookcase 2.0s after pulling the lever
+  const triggerBookcaseAutoReset = () => {
+    if (bookcaseAutoResetTimerRef.current) {
+      window.clearTimeout(bookcaseAutoResetTimerRef.current);
+      bookcaseAutoResetTimerRef.current = null;
+    }
+    bookcaseAutoResetTimerRef.current = window.setTimeout(() => {
+      bookcaseLeverPulledRef.current = false;
+      yellowBookClickCountRef.current = 0;
+      bookcaseAutoResetTimerRef.current = null;
+    }, 2000);
+  };
+
+  // Smoothly navigate inside Pink Room (door, desk, corkboard, white showcase cabinets, upper capsule interior, or secret archive room)
+  const handleSelectPinkView = (target: 'door' | 'desk' | 'board' | 'showcase' | 'capsule' | 'secret') => {
+    const prevLocation = viewLocationRef.current;
     normalizeCurrentYaw();
     viewLocationRef.current = target;
     setViewLocation(target);
-    if (target === 'desk') {
-      targetYawRef.current = -0.42;
-      targetPitchRef.current = -0.08;
-    } else if (target === 'capsule') {
-      targetYawRef.current = CENTER_YAW;
-      targetPitchRef.current = -0.04;
-    } else if (target === 'board') {
-      targetYawRef.current = Math.PI / 2;
-      targetPitchRef.current = -0.02;
-    } else if (target === 'showcase') {
-      targetYawRef.current = cameraYawRef.current < 0 ? -Math.PI : Math.PI;
-      targetPitchRef.current = -0.02;
+    if (target === 'secret') {
+      bookcaseLeverPulledRef.current = true;
+      yellowBookClickCountRef.current = 3;
+      targetYawRef.current = -Math.PI / 2;
+      targetPitchRef.current = -0.06;
+      if (prevLocation !== 'secret') {
+        triggerBookcaseAutoReset();
+      }
     } else {
-      targetYawRef.current = CENTER_YAW;
-      targetPitchRef.current = 0;
+      if (prevLocation === 'secret') {
+        triggerBookcaseAutoReset();
+      }
+      if (target === 'desk') {
+        targetYawRef.current = -0.42;
+        targetPitchRef.current = -0.08;
+      } else if (target === 'capsule') {
+        targetYawRef.current = CENTER_YAW;
+        targetPitchRef.current = -0.04;
+      } else if (target === 'board') {
+        targetYawRef.current = Math.PI / 2;
+        targetPitchRef.current = -0.02;
+      } else if (target === 'showcase') {
+        targetYawRef.current = cameraYawRef.current < 0 ? -Math.PI : Math.PI;
+        targetPitchRef.current = -0.02;
+      } else {
+        targetYawRef.current = CENTER_YAW;
+        targetPitchRef.current = 0;
+      }
     }
     setIsPinkNavOpen(false);
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
@@ -12980,8 +17020,37 @@ export const Room3DScene: React.FC = () => {
     }
   };
 
+  // Smoothly navigate inside Bathroom & Balcony (door, bathroom center, bathtub, outdoor balcony, or rocking chair seat)
+  const handleSelectBathView = (target: 'door' | 'center' | 'tub' | 'balcony' | 'chair') => {
+    normalizeCurrentYaw();
+    viewLocationRef.current = target;
+    setViewLocation(target);
+    if (target === 'chair') {
+      bathWindowOpenRef.current = true;
+      targetYawRef.current = Math.PI + 0.50;
+      targetPitchRef.current = -0.10;
+    } else if (target === 'balcony') {
+      bathWindowOpenRef.current = true;
+      targetYawRef.current = Math.PI - 0.72;
+      targetPitchRef.current = -0.18;
+    } else if (target === 'tub') {
+      targetYawRef.current = Math.PI - 0.12;
+      targetPitchRef.current = -0.04;
+    } else if (target === 'center') {
+      targetYawRef.current = Math.PI;
+      targetPitchRef.current = -0.10;
+    } else {
+      targetYawRef.current = CENTER_YAW;
+      targetPitchRef.current = 0;
+    }
+    setIsBathNavOpen(false);
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      try { navigator.vibrate(15); } catch {}
+    }
+  };
+
   // Apply look rotation: Lobby-style rooms (lobby, royalblue, brown) preserve T-shape bounds;
-  // Cyan Foyers (2F & B1) lock camera angle; other rooms allow 360° horizontal + slight vertical
+  // Cyan Foyers (2F & B1) lock camera angle; other rooms allow 360° horizontal + vertical look
   const applyLookDelta = (deltaX: number, deltaY: number, sensitivity: number) => {
     if (
       isFoyerRoom(activeRoomRef.current) ||
@@ -13004,8 +17073,9 @@ export const Room3DScene: React.FC = () => {
       targetPitchRef.current = THREE.MathUtils.clamp(targetPitchRef.current, MIN_PITCH, MAX_PITCH);
     } else {
       const isPink = activeRoomRef.current === 'pink';
-      const OTHER_MIN_PITCH = ((isPink ? -48 : -14) * Math.PI) / 180;
-      const OTHER_MAX_PITCH = ((isPink ? 18 : 14) * Math.PI) / 180;
+      const isBath = activeRoomRef.current === 'bathroom';
+      const OTHER_MIN_PITCH = ((isPink ? -48 : isBath ? -42 : -14) * Math.PI) / 180;
+      const OTHER_MAX_PITCH = ((isPink ? 18 : isBath ? 22 : 14) * Math.PI) / 180;
       targetPitchRef.current = THREE.MathUtils.clamp(
         targetPitchRef.current,
         OTHER_MIN_PITCH,
@@ -13437,7 +17507,104 @@ export const Room3DScene: React.FC = () => {
         </div>
       )}
 
-      {activeRoom !== 'lobby' && activeRoom !== 'pink' && (
+      {activeRoom === 'bathroom' && (
+        <div
+          className="absolute bottom-5 right-5 z-30 flex flex-col items-end"
+          onTouchStart={(e) => e.stopPropagation()}
+          onTouchMove={(e) => e.stopPropagation()}
+          onTouchEnd={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onMouseUp={(e) => e.stopPropagation()}
+        >
+          {/* Compact Unified Light-Blue Pixel-Heart Container Button UI for Bathroom & Balcony */}
+          <div
+            className={`flex flex-col items-end transition-all duration-200 ${
+              isBathNavOpen
+                ? 'bg-[#0d1c2e]/92 backdrop-blur-md border border-sky-300/55 rounded-xl p-1.5 shadow-[0_8px_22px_rgba(0,0,0,0.62)] gap-1'
+                : ''
+            }`}
+          >
+            {isBathNavOpen && (
+              <div className="flex flex-col gap-1 w-full min-w-[114px]">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleSelectBathView('door');
+                  }}
+                  className={`w-full px-2.5 py-1.5 rounded-lg text-xs font-medium tracking-wide active:scale-95 transition-all cursor-pointer select-none border text-center ${
+                    viewLocation === 'door'
+                      ? 'bg-[#1c4069] border-sky-200 text-white shadow-[0_0_10px_rgba(154,221,255,0.35)]'
+                      : 'bg-[#12263f]/85 border-sky-300/35 text-sky-100 hover:bg-[#193557] hover:border-sky-200/75'
+                  }`}
+                >
+                  去門前
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleSelectBathView('tub');
+                  }}
+                  className={`w-full px-2.5 py-1.5 rounded-lg text-xs font-medium tracking-wide active:scale-95 transition-all cursor-pointer select-none border text-center ${
+                    viewLocation === 'tub'
+                      ? 'bg-[#1c4069] border-sky-200 text-white shadow-[0_0_10px_rgba(154,221,255,0.35)]'
+                      : 'bg-[#12263f]/85 border-sky-300/35 text-sky-100 hover:bg-[#193557] hover:border-sky-200/75'
+                  }`}
+                >
+                  去浴缸裡
+                </button>
+              </div>
+            )}
+
+            <button
+              type="button"
+              aria-label="洗手間位置選單"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsBathNavOpen((prev) => !prev);
+                if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                  try { navigator.vibrate(12); } catch {}
+                }
+              }}
+              className={`group flex items-center justify-center rounded-lg transition-all duration-200 cursor-pointer select-none active:scale-90 ${
+                isBathNavOpen
+                  ? 'w-full py-1 bg-white/5 hover:bg-white/10 border border-sky-200/25'
+                  : 'px-2 py-2 bg-[#0d1c2e]/90 backdrop-blur-md border border-sky-300/55 shadow-[0_4px_16px_rgba(0,0,0,0.58)] hover:bg-[#152d49] hover:border-sky-200/85 hover:scale-105'
+              }`}
+            >
+              <div
+                className={`grid grid-cols-7 gap-[1.5px] p-0.5 transition-all duration-300 ${
+                  isBathNavOpen
+                    ? 'scale-105 drop-shadow-[0_0_12px_rgba(154,221,255,0.65)] opacity-100'
+                    : 'opacity-90 group-hover:opacity-100 drop-shadow-[0_0_8px_rgba(154,221,255,0.45)]'
+                }`}
+              >
+                {[
+                  0, 1, 1, 0, 1, 1, 0,
+                  1, 2, 2, 1, 2, 2, 1,
+                  1, 2, 2, 2, 2, 2, 1,
+                  1, 2, 2, 2, 2, 2, 1,
+                  0, 1, 2, 2, 2, 1, 0,
+                  0, 0, 1, 2, 1, 0, 0,
+                  0, 0, 0, 1, 0, 0, 0,
+                ].map((pixel, idx) => (
+                  <div
+                    key={idx}
+                    className="w-[5px] h-[5px]"
+                    style={{
+                      backgroundColor:
+                        pixel === 1 ? '#FFFFFF' : pixel === 2 ? '#9ADDFF' : 'transparent',
+                    }}
+                  />
+                ))}
+              </div>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {activeRoom !== 'lobby' && activeRoom !== 'pink' && activeRoom !== 'bathroom' && (
         <div className="absolute bottom-5 right-5 z-30 flex flex-col gap-2.5">
           <button
             type="button"
