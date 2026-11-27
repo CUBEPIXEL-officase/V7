@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { Reflector } from 'three/addons/objects/Reflector.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { X } from 'lucide-react';
 import { EventCalendar, CATEGORY_COLORS, getEventsForDate } from './EventCalendar';
@@ -39,7 +40,7 @@ export const Room3DScene: React.FC = () => {
   const SEATED_HEIGHT = 0.68; // 坐姿視線高度
   const SEATED_Z = 1.15; // 圓形茶几南側坐墊位置 (圓几半徑 0.85m + 坐墊中心 0.30m)
 
-  type ExtraRoomId = 'purple' | 'green' | 'gold' | 'pink' | 'cyan' | 'cyan_b1' | 'royalblue' | 'brown' | 'bathroom';
+  type ExtraRoomId = 'purple' | 'green' | 'gold' | 'pink' | 'cyan' | 'cyan_b1' | 'royalblue' | 'brown' | 'bathroom' | 'basement';
   type RoomId = 'lobby' | ExtraRoomId;
   const isLobbyStyleRoom = (id: RoomId) => id === 'lobby' || id === 'royalblue' || id === 'brown';
   const isFoyerRoom = (id: RoomId) => id === 'cyan' || id === 'cyan_b1';
@@ -53,10 +54,10 @@ export const Room3DScene: React.FC = () => {
   const [dakiSubtitle, setDakiSubtitle] = useState<string | null>(null);
   const dakiSubtitleTimerRef = useRef<number | null>(null);
   const [viewLocation, setViewLocation] = useState<
-    'table' | 'cabinet' | 'door' | 'door2' | 'center' | 'desk' | 'capsule' | 'board' | 'showcase' | 'tub' | 'balcony' | 'chair' | 'secret'
+    'table' | 'cabinet' | 'door' | 'door2' | 'center' | 'desk' | 'capsule' | 'board' | 'showcase' | 'tub' | 'balcony' | 'chair' | 'secret' | 'bsmt_desk'
   >('table');
   const viewLocationRef = useRef<
-    'table' | 'cabinet' | 'door' | 'door2' | 'center' | 'desk' | 'capsule' | 'board' | 'showcase' | 'tub' | 'balcony' | 'chair' | 'secret'
+    'table' | 'cabinet' | 'door' | 'door2' | 'center' | 'desk' | 'capsule' | 'board' | 'showcase' | 'tub' | 'balcony' | 'chair' | 'secret' | 'bsmt_desk'
   >('table');
   const [activeRoom, setActiveRoom] = useState<RoomId>('lobby');
   const activeRoomRef = useRef<RoomId>('lobby');
@@ -102,6 +103,47 @@ export const Room3DScene: React.FC = () => {
   const capsuleMainLightBackRef = useRef<THREE.PointLight | null>(null);
   const capsuleMainLightFrontRef = useRef<THREE.PointLight | null>(null);
   const capsuleLightModeRef = useRef<number>(0); // 0: 白色, 1: 藍色, 2: 藍色燈條, 3: 關燈
+
+  // Lower Capsule 7-click door open & slide interactive refs
+  const lowerPodClickCountRef = useRef<number>(0);
+  const lowerPodIsOpenRef = useRef<boolean>(false);
+  const lowerPodAutoResetTimerRef = useRef<number | null>(null);
+  const lowerPodDoorPivotRef = useRef<THREE.Group | null>(null);
+  const lowerPodHitboxRef = useRef<THREE.Mesh | null>(null);
+  const lowerPodSlideGroupRef = useRef<THREE.Group | null>(null);
+  const lowerPodSlideHitboxRef = useRef<THREE.Mesh | null>(null);
+  const lowerPodLightRef = useRef<THREE.PointLight | null>(null);
+  const slideSpeedRingsRef = useRef<THREE.Mesh[]>([]);
+  const [isSlideFxActive, setIsSlideFxActive] = useState(false);
+  const isSlidingRef = useRef<boolean>(false);
+  const slidePhaseRef = useRef<'pink_chute' | 'basement_exit'>('pink_chute');
+  const slideAnimElapsedRef = useRef<number>(0);
+  const slideStartPosRef = useRef<THREE.Vector3>(new THREE.Vector3());
+  const slideStartYawRef = useRef<number>(0);
+  const slideStartPitchRef = useRef<number>(0);
+  const slideVeilTriggeredRef = useRef<boolean>(false);
+
+  // Basement B4 one-way upward staircase -> Bathroom (阿璃的宿舍洗手間) floor hatch emergence & surveillance desk refs
+  const basementStairHitboxRef = useRef<THREE.Mesh | null>(null);
+  const basementDeskHitboxRef = useRef<THREE.Mesh | null>(null);
+  const basementMainScreenHitboxRef = useRef<THREE.Mesh | null>(null);
+  const basementScreenFocusedRef = useRef<boolean>(false);
+  const basementScreenFocusSpotRef = useRef<{
+    focusPos: THREE.Vector3;
+    focusYaw: number;
+    focusPitch: number;
+  } | null>(null);
+  const basementConsoleBtnRefs = useRef<Array<{ channelIdx: number; hitbox: THREE.Mesh }>>([]);
+  const activeEyeChannelRef = useRef<number>(0);
+  const switchBasementEyeChannelRef = useRef<((chIdx: number) => void) | null>(null);
+  const bathHatchPivotRef = useRef<THREE.Group | null>(null);
+  const isClimbingRef = useRef<boolean>(false);
+  const climbPhaseRef = useRef<'basement_stairs' | 'bath_emerge'>('basement_stairs');
+  const climbAnimElapsedRef = useRef<number>(0);
+  const climbStartPosRef = useRef<THREE.Vector3>(new THREE.Vector3());
+  const climbStartYawRef = useRef<number>(0);
+  const climbStartPitchRef = useRef<number>(0);
+  const climbVeilTriggeredRef = useRef<boolean>(false);
 
   // Dakimakura Body Pillow Interactive Animation Refs (7-click sequence inside Upper Capsule Pod)
   const dakiGroupRef = useRef<THREE.Group | null>(null);
@@ -240,6 +282,12 @@ export const Room3DScene: React.FC = () => {
     ),
     brown: createInitialExtraRoomState(
       [0xe8eef5, 0x111216, 0x111216, 0x111216], // Top: 銀色(回二樓門廊), 其餘三個黑色
+      [true, false, false, false],
+      0,
+      0
+    ),
+    basement: createInitialExtraRoomState(
+      [0xe8eef5, 0x111216, 0x111216, 0x111216], // Top: 銀色(回阿璃的宿舍), 其餘三個黑色
       [true, false, false, false],
       0,
       0
@@ -501,6 +549,25 @@ export const Room3DScene: React.FC = () => {
     const tabletopTexture = createTabletopWoodTexture();
     const ceilingTexture = createCeilingTexture();
     const extraRoomTexturesToDispose: THREE.Texture[] = [];
+    const eyeRenderTargetsToDispose: THREE.WebGLRenderTarget[] = [];
+    const registeredEyeballs: Array<{
+      id: 'green' | 'blue' | 'purple' | 'red' | 'brown';
+      roomId: RoomId;
+      code: string;
+      locationLabel: string;
+      accentHex: number;
+      accentCss: string;
+      eyeGroup: THREE.Group;
+    }> = [];
+    const eyeMonitorFeeds: Array<{
+      id: 'green' | 'blue' | 'purple' | 'red' | 'brown';
+      roomId: RoomId;
+      eyeGroup: THREE.Group;
+      eyePivot: THREE.Group;
+      eyeRadius: number;
+      renderTarget: THREE.WebGLRenderTarget;
+      camera: THREE.PerspectiveCamera;
+    }> = [];
     const textureLoader = new THREE.TextureLoader();
 
     // --- 3. ROOM ARCHITECTURE (大廳 - 10x7m) ---
@@ -1459,6 +1526,233 @@ export const Room3DScene: React.FC = () => {
     portalRimGemMatsRef.current = lobbyPortalDoor.rimGemMats;
     lobbyPlaqueMatRef.current = lobbyPortalDoor.plaqueMat;
 
+    // Shared Realistic Multi-Layer Glass Eyeball Builder (仿真的玻璃眼珠：微血管開口鞏膜 + 放射狀虹膜 + 深邃黑瞳孔 + 凸面水晶角膜)
+    const createEyeScleraTexture = () => {
+      const c = document.createElement('canvas');
+      c.width = 512;
+      c.height = 256;
+      const ctx = c.getContext('2d');
+      if (ctx) {
+        const bgGrad = ctx.createLinearGradient(0, 0, 0, 256);
+        bgGrad.addColorStop(0.0, '#fcfaf7');
+        bgGrad.addColorStop(0.32, '#f8f4ee');
+        bgGrad.addColorStop(0.72, '#f1e5dd');
+        bgGrad.addColorStop(1.0, '#e5d3ca');
+        ctx.fillStyle = bgGrad;
+        ctx.fillRect(0, 0, 512, 256);
+
+        // Organic delicate branching capillary veins wrapping forward onto the visible white sclera (y ∈ [18, 210])
+        let seed = 9137;
+        const rand = () => {
+          seed = (seed * 16807) % 2147483647;
+          return (seed - 1) / 2147483646;
+        };
+        ctx.lineCap = 'round';
+        for (let v = 0; v < 40; v++) {
+          let vx = rand() * 512;
+          let vy = 105 + rand() * 115;
+          ctx.strokeStyle = v % 3 === 0 ? 'rgba(185, 36, 48, 0.44)' : 'rgba(208, 68, 80, 0.30)';
+          ctx.lineWidth = 0.8 + rand() * 0.9;
+          ctx.beginPath();
+          ctx.moveTo(vx, vy);
+          for (let seg = 0; seg < 6; seg++) {
+            vx += (rand() - 0.5) * 28;
+            vy -= 10 + rand() * 15;
+            if (vy < 18) break;
+            ctx.lineTo(vx, vy);
+            if (seg === 2 && rand() > 0.4) {
+              ctx.moveTo(vx, vy);
+              ctx.lineTo(vx + (rand() - 0.5) * 20, Math.max(16, vy - 14 - rand() * 10));
+              ctx.moveTo(vx, vy);
+            }
+          }
+          ctx.stroke();
+        }
+      }
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      extraRoomTexturesToDispose.push(tex);
+      return tex;
+    };
+    const sharedEyeScleraTex = createEyeScleraTexture();
+
+    const irisPalettes: Record<
+      'green' | 'blue' | 'purple' | 'red' | 'brown',
+      { limbus: string; outer: string; mid: string; inner: string; fleck: string; collarette: string }
+    > = {
+      green: { limbus: '#062614', outer: '#147a38', mid: '#26d062', inner: '#9be838', fleck: '#fef08a', collarette: '#d9f99d' },
+      blue: { limbus: '#0a1c47', outer: '#1a4fd6', mid: '#38bdf8', inner: '#93e1fd', fleck: '#e0f2fe', collarette: '#bae6fd' },
+      purple: { limbus: '#1e053d', outer: '#6b21a8', mid: '#a855f7', inner: '#d8b4fe', fleck: '#f5d0fe', collarette: '#e9d5ff' },
+      red: { limbus: '#2e0408', outer: '#991b1b', mid: '#ef4444', inner: '#fb923c', fleck: '#fecaca', collarette: '#fca5a5' },
+      brown: { limbus: '#1c0b04', outer: '#5e2c0e', mid: '#a14d12', inner: '#e08b22', fleck: '#fde68a', collarette: '#fbbf24' },
+    };
+
+    const createGlassEyeball = (
+      variant: 'green' | 'blue' | 'purple' | 'red' | 'brown',
+      radius = 0.070
+    ) => {
+      const pal = irisPalettes[variant];
+      const ic = document.createElement('canvas');
+      ic.width = 256;
+      ic.height = 256;
+      const ictx = ic.getContext('2d');
+      if (ictx) {
+        const cx = 128;
+        const cy = 128;
+        const irisR = 126;
+
+        // Multi-zone radial iris gradient (collarette -> vibrant stroma -> deep outer limbal ring)
+        const baseGrad = ictx.createRadialGradient(cx, cy, irisR * 0.24, cx, cy, irisR);
+        baseGrad.addColorStop(0.0, pal.inner);
+        baseGrad.addColorStop(0.32, pal.inner);
+        baseGrad.addColorStop(0.46, pal.mid);
+        baseGrad.addColorStop(0.76, pal.outer);
+        baseGrad.addColorStop(0.90, pal.limbus);
+        baseGrad.addColorStop(1.0, pal.limbus);
+        ictx.fillStyle = baseGrad;
+        ictx.beginPath();
+        ictx.arc(cx, cy, irisR, 0, Math.PI * 2);
+        ictx.fill();
+
+        // Rich radial iris muscle fibers & organic crypts
+        for (let i = 0; i < 180; i++) {
+          const ang = (i / 180) * Math.PI * 2 + Math.sin(i * 9.7) * 0.022;
+          const rStart = irisR * (0.31 + (i % 5) * 0.024);
+          const rEnd = irisR * (0.86 + (i % 3) * 0.022);
+          ictx.strokeStyle = i % 4 === 0 ? pal.fleck : i % 2 === 0 ? pal.inner : pal.limbus;
+          ictx.globalAlpha = i % 4 === 0 ? 0.44 : 0.34;
+          ictx.lineWidth = i % 5 === 0 ? 2.2 : 1.15;
+          ictx.beginPath();
+          ictx.moveTo(cx + Math.cos(ang) * rStart, cy + Math.sin(ang) * rStart);
+          ictx.lineTo(cx + Math.cos(ang) * rEnd, cy + Math.sin(ang) * rEnd);
+          ictx.stroke();
+        }
+        ictx.globalAlpha = 1.0;
+
+        // Distinct jagged collarette ring separating central pupillary zone & ciliary zone
+        ictx.strokeStyle = pal.collarette;
+        ictx.globalAlpha = 0.52;
+        ictx.lineWidth = 3.2;
+        ictx.beginPath();
+        for (let k = 0; k <= 48; k++) {
+          const a = (k / 48) * Math.PI * 2;
+          const rr = irisR * (0.47 + (k % 2 === 0 ? 0.025 : -0.02));
+          const px = cx + Math.cos(a) * rr;
+          const py = cy + Math.sin(a) * rr;
+          if (k === 0) ictx.moveTo(px, py);
+          else ictx.lineTo(px, py);
+        }
+        ictx.closePath();
+        ictx.stroke();
+        ictx.globalAlpha = 1.0;
+
+        // Deep jet-black central pupil painted on texture (reinforced by 3D central pupil disc)
+        ictx.fillStyle = '#020203';
+        ictx.beginPath();
+        ictx.arc(cx, cy, irisR * 0.34, 0, Math.PI * 2);
+        ictx.fill();
+
+        // Crisp subtle iris catchlight highlight flecks
+        ictx.fillStyle = 'rgba(255, 255, 255, 0.72)';
+        ictx.beginPath();
+        ictx.arc(cx - irisR * 0.22, cy - irisR * 0.24, irisR * 0.075, 0, Math.PI * 2);
+        ictx.fill();
+        ictx.fillStyle = 'rgba(255, 255, 255, 0.42)';
+        ictx.beginPath();
+        ictx.arc(cx + irisR * 0.20, cy + irisR * 0.22, irisR * 0.036, 0, Math.PI * 2);
+        ictx.fill();
+      }
+      const irisTex = new THREE.CanvasTexture(ic);
+      irisTex.colorSpace = THREE.SRGBColorSpace;
+      irisTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      extraRoomTexturesToDispose.push(irisTex);
+
+      const eyeGroup = new THREE.Group();
+      const eyeBallPivot = new THREE.Group();
+      eyeBallPivot.position.set(0, radius, 0);
+      // Slight upward gaze toward viewer
+      eyeBallPivot.rotation.x = -0.15;
+
+      // 1. Open-front glassy sclera shell (thetaStart = 0.19*PI leaves circular limbus opening r=0.562*R at z=0.827*R so iris & pupil are 100% unobstructed)
+      const scleraMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(radius, 36, 24, 0, Math.PI * 2, Math.PI * 0.19, Math.PI * 0.81),
+        new THREE.MeshPhysicalMaterial({
+          map: sharedEyeScleraTex,
+          roughness: 0.14,
+          metalness: 0.0,
+          clearcoat: 1.0,
+          clearcoatRoughness: 0.04,
+          envMapIntensity: 1.25,
+        })
+      );
+      scleraMesh.rotation.x = Math.PI / 2;
+      scleraMesh.castShadow = true;
+      scleraMesh.receiveShadow = true;
+      eyeBallPivot.add(scleraMesh);
+
+      // 2. Vibrant colored radial iris disc recessed cleanly inside the sclera limbus opening
+      const irisMesh = new THREE.Mesh(
+        new THREE.CircleGeometry(radius * 0.572, 48),
+        new THREE.MeshStandardMaterial({
+          map: irisTex,
+          emissiveMap: irisTex,
+          emissive: 0xffffff,
+          emissiveIntensity: 0.24,
+          roughness: 0.26,
+          metalness: 0.03,
+        })
+      );
+      irisMesh.position.set(0, 0, radius * 0.822);
+      eyeBallPivot.add(irisMesh);
+
+      // 2b. Outer dark limbal ring contrasting iris against white sclera
+      const limbalRing = new THREE.Mesh(
+        new THREE.RingGeometry(radius * 0.505, radius * 0.570, 48),
+        new THREE.MeshStandardMaterial({
+          color: pal.limbus,
+          roughness: 0.35,
+          metalness: 0.0,
+        })
+      );
+      limbalRing.position.set(0, 0, radius * 0.824);
+      eyeBallPivot.add(limbalRing);
+
+      // 2c. Crisp jet-black central pupil ("中間的眼球")
+      const pupilMesh = new THREE.Mesh(
+        new THREE.CircleGeometry(radius * 0.195, 32),
+        new THREE.MeshBasicMaterial({ color: 0x020203 })
+      );
+      pupilMesh.position.set(0, 0, radius * 0.826);
+      eyeBallPivot.add(pupilMesh);
+
+      // 3. Protruding crystal-clear curved glass cornea dome over iris & pupil
+      const corneaMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(radius * 0.60, 32, 20, 0, Math.PI * 2, 0, Math.PI * 0.39),
+        new THREE.MeshPhysicalMaterial({
+          color: 0xffffff,
+          roughness: 0.01,
+          metalness: 0.0,
+          clearcoat: 1.0,
+          clearcoatRoughness: 0.01,
+          reflectivity: 1.0,
+          envMapIntensity: 2.0,
+          transparent: true,
+          opacity: 0.14,
+          depthWrite: false,
+        })
+      );
+      corneaMesh.rotation.x = Math.PI / 2;
+      corneaMesh.position.set(0, 0, radius * 0.625);
+      eyeBallPivot.add(corneaMesh);
+
+      eyeGroup.add(eyeBallPivot);
+      eyeGroup.userData.eyePivot = eyeBallPivot;
+      eyeGroup.userData.eyeRadius = radius;
+      return eyeGroup;
+    };
+
     // --- 4. WALL-SIDE WOODEN TABLE (牆邊木桌 - 寬度縮小，移去舊物件，置放盆栽) ---
     const tableGroup = new THREE.Group();
     const TABLE_WIDTH = 2.6; // 寬度稍微縮小 (由原本滿牆 4.6m 縮為 2.6m，兩側留出空間)
@@ -2311,6 +2605,21 @@ export const Room3DScene: React.FC = () => {
     switch2Group.position.set(-0.65, TABLE_HEIGHT, 0.05);
     switch2Group.rotation.y = 0.08;
     tableGroup.add(switch2Group);
+
+    // Realistic Green Glass Eyeball at far-right corner of Lobby Wall Table (大廳牆面桌面區最右方：綠色眼睛)
+    const lobbyGreenEye = createGlassEyeball('green', 0.070);
+    lobbyGreenEye.position.set(TABLE_WIDTH / 2 - 0.21, TABLE_HEIGHT, 0.06);
+    lobbyGreenEye.rotation.y = -0.30;
+    tableGroup.add(lobbyGreenEye);
+    registeredEyeballs.push({
+      id: 'green',
+      roomId: 'lobby',
+      code: 'EYE-01',
+      locationLabel: '大廳桌面・綠眼',
+      accentHex: 0x22c55e,
+      accentCss: '#4ade80',
+      eyeGroup: lobbyGreenEye,
+    });
 
     tableGroup.position.set(0, 0, -ROOM_DEPTH / 2 + TABLE_DEPTH / 2);
     roomGroup.add(tableGroup);
@@ -4316,17 +4625,17 @@ export const Room3DScene: React.FC = () => {
       }
     > = {
       purple: {
-        floorColor: 0x8f74b3,
-        ceilingColor: 0x5c3e82,
-        wallColor: 0xa78bfa,
-        baseboardColor: 0x1b0e29,
-        accentWoodTint: 0x1d1124,
-        ceilingRoseColor: 0x1c0f29,
-        lampCapColor: 0x2a183b,
-        bulbColor: 0xf5ebff,
-        mainLightColor: 0xd8b4fe,
-        upGlowColor: 0xc084fc,
-        doorAccentColor: 0xd8b4fe,
+        floorColor: 0xffffff,
+        ceilingColor: 0xf4efe8,
+        wallColor: 0xffffff,
+        baseboardColor: 0xe7e0d6,
+        accentWoodTint: 0x2d1c38,
+        ceilingRoseColor: 0x2a2033,
+        lampCapColor: 0x3b2d47,
+        bulbColor: 0xfffcf5,
+        mainLightColor: 0xfff7ec,
+        upGlowColor: 0xf5edff,
+        doorAccentColor: 0xe9d5ff,
       },
       green: {
         floorColor: 0x639e4b,
@@ -4755,15 +5064,118 @@ export const Room3DScene: React.FC = () => {
       return texture;
     };
 
+    const createLightMahoganyFloorTexture = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1024;
+      canvas.height = 1024;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return new THREE.Texture();
+
+      ctx.fillStyle = '#9c523d';
+      ctx.fillRect(0, 0, 1024, 1024);
+
+      const rows = 16;
+      const rowHeight = 1024 / rows;
+      const plankCols = 4;
+      const colWidth = 1024 / plankCols;
+      const lightMahoganyPalette = [
+        '#b96850', '#c3735b', '#ae5e47', '#c87961',
+        '#b4634c', '#bf6f56', '#c5755c', '#b16149',
+      ];
+
+      for (let r = 0; r < rows; r++) {
+        const y = r * rowHeight;
+        const colShift = (r % 2) * (colWidth / 2);
+        for (let c = -1; c <= plankCols; c++) {
+          const x = c * colWidth + colShift;
+          const colorIdx = Math.floor((Math.sin(r * 14.1 + c * 29.3) * 0.5 + 0.5) * lightMahoganyPalette.length);
+          ctx.fillStyle = lightMahoganyPalette[colorIdx % lightMahoganyPalette.length];
+          ctx.fillRect(x + 1, y + 1, colWidth - 2, rowHeight - 2);
+
+          // Rich warm reddish-mahogany wood grain fibers
+          ctx.fillStyle = 'rgba(104, 38, 22, 0.18)';
+          for (let g = 3; g < rowHeight - 3; g += 4.2) {
+            ctx.fillRect(x + 2, y + g, colWidth - 4, 1.3);
+          }
+          ctx.fillStyle = 'rgba(246, 198, 174, 0.16)';
+          for (let g = 6; g < rowHeight - 3; g += 8.5) {
+            ctx.fillRect(x + 2, y + g, colWidth - 4, 1.1);
+          }
+
+          // Subtle plank seams
+          ctx.fillStyle = 'rgba(84, 32, 20, 0.44)';
+          ctx.fillRect(x, y + rowHeight - 2, colWidth, 2);
+          ctx.fillRect(x + colWidth - 2, y, 2, rowHeight);
+        }
+      }
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      return texture;
+    };
+
+    const createWhiteWoodWallTexture = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 512;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return new THREE.Texture();
+
+      ctx.fillStyle = '#f3efe9';
+      ctx.fillRect(0, 0, 512, 512);
+
+      const numPlanks = 8;
+      const plankW = 512 / numPlanks;
+      const whiteWoodShades = ['#f7f4ef', '#f2ede6', '#faf8f4', '#efe9e1'];
+
+      for (let p = 0; p < numPlanks; p++) {
+        const px = p * plankW;
+        const grad = ctx.createLinearGradient(px, 0, px + plankW, 0);
+        const baseShade = whiteWoodShades[p % whiteWoodShades.length];
+        grad.addColorStop(0.0, '#fbf9f6');
+        grad.addColorStop(0.18, baseShade);
+        grad.addColorStop(0.84, '#f0ebe3');
+        grad.addColorStop(1.0, '#e8e2d8');
+        ctx.fillStyle = grad;
+        ctx.fillRect(px, 0, plankW - 1.5, 512);
+
+        // Delicate pale wood grain lines
+        ctx.fillStyle = 'rgba(162, 150, 136, 0.13)';
+        for (let gx = 4; gx < plankW - 4; gx += 4.5) {
+          ctx.fillRect(px + gx, 0, 1.1, 512);
+        }
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.36)';
+        for (let gx = 7; gx < plankW - 4; gx += 9) {
+          ctx.fillRect(px + gx, 0, 1.0, 512);
+        }
+
+        // Crisp vertical whitewood panel groove
+        ctx.fillStyle = 'rgba(182, 172, 158, 0.34)';
+        ctx.fillRect(px + plankW - 1.5, 0, 1.5, 512);
+      }
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      return texture;
+    };
+
     const grayOakFloorBaseTex = createGrayOakFloorTexture();
+    const lightMahoganyFloorBaseTex = createLightMahoganyFloorTexture();
     const whitePlasterWallBaseTex = createWhitePlasterWallTexture();
+    const whiteWoodWallBaseTex = createWhiteWoodWallTexture();
     const lightWoodBaseTex = createLightWoodTexture();
     const coolWhiteWoodBaseTex = createCoolWhiteWoodTexture();
     const catScratchFabricBaseTex = createCatScratchFabricTexture();
     const curtainFabricBaseTex = createCurtainFabricTexture();
     extraRoomTexturesToDispose.push(
       grayOakFloorBaseTex,
+      lightMahoganyFloorBaseTex,
       whitePlasterWallBaseTex,
+      whiteWoodWallBaseTex,
       lightWoodBaseTex,
       coolWhiteWoodBaseTex,
       catScratchFabricBaseTex,
@@ -4777,19 +5189,64 @@ export const Room3DScene: React.FC = () => {
       coloredRoomGroup.visible = activeRoomRef.current === roomId;
       roomState.roomGroup = coloredRoomGroup;
 
-      // 1. Empty 7x7 Colored Hardwood Floor (Pink room uses Darker Gray Oak floor)
-      const cFloorTex = (roomId === 'pink' ? grayOakFloorBaseTex : floorTexture).clone();
+      // 1. Empty 7x7 Colored Hardwood Floor (Pink = Darker Gray Oak, Purple = Light Mahogany)
+      const cFloorTex = (
+        roomId === 'pink'
+          ? grayOakFloorBaseTex
+          : roomId === 'purple'
+            ? lightMahoganyFloorBaseTex
+            : floorTexture
+      ).clone();
       cFloorTex.repeat.set(3.5, 3.5);
       cFloorTex.needsUpdate = true;
       extraRoomTexturesToDispose.push(cFloorTex);
+      let cFloorGeo: THREE.BufferGeometry;
+      if (roomId === 'pink') {
+        const floorShape = new THREE.Shape();
+        const halfS = PR_SIZE / 2;
+        floorShape.moveTo(-halfS, -halfS);
+        floorShape.lineTo(halfS, -halfS);
+        floorShape.lineTo(halfS, halfS);
+        floorShape.lineTo(-halfS, halfS);
+        floorShape.closePath();
+
+        // Carve large rounded opening directly beneath Lower Capsule Pod '01' (world X = -4.36, Z ∈ [0.76, 3.28])
+        const holeCx = -2.86;
+        const holeCy = -2.02;
+        const holeHw = 0.47;
+        const holeHh = 1.26;
+        const holeR = 0.46;
+        const holePath = new THREE.Path();
+        holePath.moveTo(holeCx - holeHw + holeR, holeCy + holeHh);
+        holePath.lineTo(holeCx + holeHw - holeR, holeCy + holeHh);
+        holePath.quadraticCurveTo(holeCx + holeHw, holeCy + holeHh, holeCx + holeHw, holeCy + holeHh - holeR);
+        holePath.lineTo(holeCx + holeHw, holeCy - holeHh + holeR);
+        holePath.quadraticCurveTo(holeCx + holeHw, holeCy - holeHh, holeCx + holeHw - holeR, holeCy - holeHh);
+        holePath.lineTo(holeCx - holeHw + holeR, holeCy - holeHh);
+        holePath.quadraticCurveTo(holeCx - holeHw, holeCy - holeHh, holeCx - holeHw, holeCy - holeHh + holeR);
+        holePath.lineTo(holeCx - holeHw, holeCy + holeHh - holeR);
+        holePath.quadraticCurveTo(holeCx - holeHw, holeCy + holeHh, holeCx - holeHw + holeR, holeCy + holeHh);
+        floorShape.holes.push(holePath);
+
+        cFloorGeo = new THREE.ShapeGeometry(floorShape, 24);
+        const fPos = cFloorGeo.attributes.position;
+        const fUv = cFloorGeo.attributes.uv;
+        for (let i = 0; i < fPos.count; i++) {
+          fUv.setXY(i, (fPos.getX(i) + halfS) / PR_SIZE, (fPos.getY(i) + halfS) / PR_SIZE);
+        }
+        fUv.needsUpdate = true;
+      } else {
+        cFloorGeo = new THREE.PlaneGeometry(PR_SIZE, PR_SIZE);
+      }
+
       const cFloor = new THREE.Mesh(
-        new THREE.PlaneGeometry(PR_SIZE, PR_SIZE),
+        cFloorGeo,
         new THREE.MeshStandardMaterial({
           map: cFloorTex,
           color: theme.floorColor,
-          roughness: roomId === 'pink' ? 0.72 : 0.58,
+          roughness: roomId === 'pink' ? 0.72 : roomId === 'purple' ? 0.44 : 0.58,
           metalness: roomId === 'pink' ? 0.01 : 0.04,
-          envMapIntensity: roomId === 'pink' ? 0.24 : 0.34,
+          envMapIntensity: roomId === 'pink' ? 0.24 : roomId === 'purple' ? 0.44 : 0.34,
         })
       );
       cFloor.rotation.x = -Math.PI / 2;
@@ -4797,14 +5254,14 @@ export const Room3DScene: React.FC = () => {
       cFloor.receiveShadow = true;
       coloredRoomGroup.add(cFloor);
 
-      // 2. Empty 7x7 Ceiling
+      // 2. Empty 7x7 Ceiling (Pink & Purple use clean matte plaster ceilings)
       let cCeilingMat: THREE.MeshStandardMaterial;
-      if (roomId === 'pink') {
+      if (roomId === 'pink' || roomId === 'purple') {
         cCeilingMat = new THREE.MeshStandardMaterial({
           color: theme.ceilingColor,
-          roughness: 0.96,
+          roughness: 0.95,
           metalness: 0.0,
-          envMapIntensity: 0.16,
+          envMapIntensity: 0.18,
         });
       } else {
         const cCeilingTex = ceilingTexture.clone();
@@ -4824,7 +5281,7 @@ export const Room3DScene: React.FC = () => {
       cCeiling.rotation.x = Math.PI / 2;
       coloredRoomGroup.add(cCeiling);
 
-      // 3. Four 7x3m Walls (Pink room uses Matte White Plaster walls)
+      // 3. Four 7x3m Walls (Pink = Matte White Plaster, Purple = White Wood panels)
       const makeColoredWallMat = () => {
         if (roomId === 'pink') {
           const tex = whitePlasterWallBaseTex.clone();
@@ -4837,6 +5294,19 @@ export const Room3DScene: React.FC = () => {
             roughness: 0.97,
             metalness: 0.0,
             envMapIntensity: 0.14,
+          });
+        }
+        if (roomId === 'purple') {
+          const tex = whiteWoodWallBaseTex.clone();
+          tex.repeat.set(3.5, 1.0);
+          tex.needsUpdate = true;
+          extraRoomTexturesToDispose.push(tex);
+          return new THREE.MeshStandardMaterial({
+            map: tex,
+            color: theme.wallColor,
+            roughness: 0.60,
+            metalness: 0.02,
+            envMapIntensity: 0.28,
           });
         }
         const tex = wallTexture.clone();
@@ -4862,6 +5332,20 @@ export const Room3DScene: React.FC = () => {
       cBackWall.rotation.y = Math.PI;
       cBackWall.receiveShadow = true;
       coloredRoomGroup.add(cBackWall);
+
+      // Full-wall frameless dance studio mirror on the wall opposite & parallel to the entrance door (Z = +PR_SIZE / 2)
+      if (roomId === 'purple') {
+        const danceMirror = new Reflector(new THREE.PlaneGeometry(PR_SIZE, PR_HEIGHT), {
+          clipBias: 0.003,
+          textureWidth: 1680,
+          textureHeight: 720,
+          color: 0xc2c6ca,
+          multisample: 4,
+        });
+        danceMirror.position.set(PR_CENTER_X, PR_HEIGHT / 2, PR_SIZE / 2 - 0.004);
+        danceMirror.rotation.y = Math.PI;
+        coloredRoomGroup.add(danceMirror);
+      }
 
       // Left Wall (X = -5.0) - For Pink Room, has an opening for the secret recessed bookcase & passage
       const PINK_BK_Z_MIN = -2.20;
@@ -4918,13 +5402,17 @@ export const Room3DScene: React.FC = () => {
       cRightWall.receiveShadow = true;
       coloredRoomGroup.add(cRightWall);
 
-      // Baseboards
+      // Baseboards (skip back-wall baseboard in Purple Room so the full-wall frameless mirror reaches the floor cleanly)
       const cBaseboardMat = new THREE.MeshStandardMaterial({ color: theme.baseboardColor, roughness: 0.55 });
+      const sideBbLen = roomId === 'purple' ? PR_SIZE - 0.01 : PR_SIZE;
+      const sideBbZ = roomId === 'purple' ? -0.005 : 0;
       const baseboardSpecs: [number, number, number, number, number, number][] = [
-        [PR_SIZE, 0.1, 0.04, PR_CENTER_X, 0.05, PR_SIZE / 2 - 0.02],
-        [0.04, 0.1, PR_SIZE, 2.0 - 0.02, 0.05, 0],
+        [0.04, 0.1, sideBbLen, 2.0 - 0.02, 0.05, sideBbZ],
         [PR_SIZE, 0.1, 0.04, PR_CENTER_X, 0.05, -PR_SIZE / 2 + 0.02],
       ];
+      if (roomId !== 'purple') {
+        baseboardSpecs.push([PR_SIZE, 0.1, 0.04, PR_CENTER_X, 0.05, PR_SIZE / 2 - 0.02]);
+      }
       if (roomId === 'pink') {
         const frontBbLen = PINK_BK_Z_MIN - -PR_SIZE / 2;
         const rearBbLen = PR_SIZE / 2 - PINK_BK_Z_MAX;
@@ -4933,7 +5421,7 @@ export const Room3DScene: React.FC = () => {
           [0.04, 0.1, rearBbLen, -5.0 + 0.02, 0.05, (PINK_BK_Z_MAX + PR_SIZE / 2) / 2]
         );
       } else {
-        baseboardSpecs.push([0.04, 0.1, PR_SIZE, -5.0 + 0.02, 0.05, 0]);
+        baseboardSpecs.push([0.04, 0.1, sideBbLen, -5.0 + 0.02, 0.05, sideBbZ]);
       }
       baseboardSpecs.forEach(([bw, bh, bd, bx, by, bz]) => {
         const bb = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), cBaseboardMat);
@@ -7632,6 +8120,21 @@ export const Room3DScene: React.FC = () => {
               ['/assets/su_card_extra_3.webp', WALL_SHELF_W / 2 - 0.540, -0.02],
             ];
             shelfEaselCards.forEach(([path, px, ry]) => createShelfEaselCard(path, px, ry));
+
+            // Realistic Purple Glass Eyeball on far-left end of 1st Horizontal Shelf (阿璃的宿舍 第一個橫架最左邊：紫色眼睛)
+            const pinkShelfPurpleEye = createGlassEyeball('purple', 0.066);
+            pinkShelfPurpleEye.position.set(-WALL_SHELF_W / 2 + 0.11, LEDGE_TOP_Y, 0.025);
+            pinkShelfPurpleEye.rotation.y = 0.20;
+            ledgeGroup.add(pinkShelfPurpleEye);
+            registeredEyeballs.push({
+              id: 'purple',
+              roomId: 'pink',
+              code: 'EYE-03',
+              locationLabel: '阿璃宿舍橫架・紫眼',
+              accentHex: 0xa855f7,
+              accentCss: '#c084fc',
+              eyeGroup: pinkShelfPurpleEye,
+            });
           }
 
           // Bandai 30MS Option Hair Style Parts Vol.10 Box on Far-Right of 2nd Horizontal Wall Shelf (房間橫架第二層最右邊的盒子)
@@ -8858,40 +9361,20 @@ export const Room3DScene: React.FC = () => {
 
         const secretRoomGroup = new THREE.Group();
 
-        // 1. Secret Room Floor (7.0m × 7.0m) - Vintage Rich Walnut Herringbone Hardwood
-        const secFloorCanvas = document.createElement('canvas');
-        secFloorCanvas.width = 512;
-        secFloorCanvas.height = 512;
-        const secFloorCtx = secFloorCanvas.getContext('2d');
-        if (secFloorCtx) {
-          secFloorCtx.fillStyle = '#2f2017';
-          secFloorCtx.fillRect(0, 0, 512, 512);
-          for (let y = 0; y < 512; y += 32) {
-            for (let x = 0; x < 512; x += 64) {
-              const alt = (x / 64 + y / 32) % 2 === 0;
-              secFloorCtx.fillStyle = alt ? 'rgba(68, 48, 35, 0.35)' : 'rgba(38, 24, 16, 0.45)';
-              secFloorCtx.fillRect(x, y, 62, 30);
-              secFloorCtx.strokeStyle = 'rgba(18, 11, 7, 0.55)';
-              secFloorCtx.lineWidth = 1.5;
-              secFloorCtx.strokeRect(x, y, 62, 30);
-            }
-          }
-        }
-        const secFloorTex = new THREE.CanvasTexture(secFloorCanvas);
-        secFloorTex.colorSpace = THREE.SRGBColorSpace;
-        secFloorTex.wrapS = THREE.RepeatWrapping;
-        secFloorTex.wrapT = THREE.RepeatWrapping;
+        // 1. Secret Room Floor (7.0m × 7.0m) - Gray Oak Floor (Identical to Pink Room)
+        const secFloorTex = grayOakFloorBaseTex.clone();
         secFloorTex.repeat.set(3.5, 3.5);
-        secFloorTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        secFloorTex.needsUpdate = true;
         extraRoomTexturesToDispose.push(secFloorTex);
 
         const secFloor = new THREE.Mesh(
           new THREE.PlaneGeometry(SEC_W, SEC_D),
           new THREE.MeshStandardMaterial({
             map: secFloorTex,
-            roughness: 0.54,
-            metalness: 0.03,
-            envMapIntensity: 0.42,
+            color: EXTRA_ROOM_THEMES.pink.floorColor,
+            roughness: 0.72,
+            metalness: 0.01,
+            envMapIntensity: 0.24,
           })
         );
         secFloor.rotation.x = -Math.PI / 2;
@@ -8899,46 +9382,49 @@ export const Room3DScene: React.FC = () => {
         secFloor.receiveShadow = true;
         secretRoomGroup.add(secFloor);
 
-        // 2. Secret Room Ceiling (7.0m × 7.0m) + Exposed Timber Beams
+        // 2. Secret Room Ceiling (7.0m × 7.0m) - Identical to Pink Room Ceiling
         const secCeiling = new THREE.Mesh(
           new THREE.PlaneGeometry(SEC_W, SEC_D),
-          new THREE.MeshStandardMaterial({ color: 0x221a15, roughness: 0.94, metalness: 0.0 })
+          new THREE.MeshStandardMaterial({
+            color: EXTRA_ROOM_THEMES.pink.ceilingColor,
+            roughness: 0.96,
+            metalness: 0.0,
+            envMapIntensity: 0.16,
+          })
         );
         secCeiling.rotation.x = Math.PI / 2;
         secCeiling.position.set(SEC_CENTER_X, SEC_H, 0);
         secretRoomGroup.add(secCeiling);
 
-        const beamMat = new THREE.MeshStandardMaterial({ color: 0x3d271a, roughness: 0.72 });
-        [-2.4, -0.8, 0.8, 2.4].forEach((bz) => {
-          const beam = new THREE.Mesh(new THREE.BoxGeometry(SEC_W, 0.16, 0.16), beamMat);
-          beam.position.set(SEC_CENTER_X, SEC_H - 0.08, bz);
-          beam.castShadow = true;
-          secretRoomGroup.add(beam);
-        });
+        // 3. Secret Room Outer Walls & Partition Walls - Identical to Pink Room White Plaster Walls
+        const secWallTex = whitePlasterWallBaseTex.clone();
+        secWallTex.repeat.set(3.0, 1.5);
+        secWallTex.needsUpdate = true;
+        extraRoomTexturesToDispose.push(secWallTex);
 
-        // 3. Secret Room Outer Walls
-        const secWallMat = new THREE.MeshStandardMaterial({
-          color: 0x24323e, // Deep midnight Victorian slate
-          roughness: 0.88,
-          metalness: 0.02,
-          envMapIntensity: 0.25,
+        const makeSecWallMat = () => new THREE.MeshStandardMaterial({
+          map: secWallTex,
+          color: EXTRA_ROOM_THEMES.pink.wallColor,
+          roughness: 0.97,
+          metalness: 0.0,
+          envMapIntensity: 0.14,
         });
 
         // Far Outer Wall (X = -12.35)
-        const secFarWall = new THREE.Mesh(new THREE.PlaneGeometry(SEC_D, SEC_H), secWallMat);
+        const secFarWall = new THREE.Mesh(new THREE.PlaneGeometry(SEC_D, SEC_H), makeSecWallMat());
         secFarWall.position.set(SEC_MIN_X, SEC_H / 2, 0);
         secFarWall.rotation.y = Math.PI / 2;
         secFarWall.receiveShadow = true;
         secretRoomGroup.add(secFarWall);
 
         // Secret Front Wall (Z = -3.50)
-        const secFrontWall = new THREE.Mesh(new THREE.PlaneGeometry(SEC_W, SEC_H), secWallMat);
+        const secFrontWall = new THREE.Mesh(new THREE.PlaneGeometry(SEC_W, SEC_H), makeSecWallMat());
         secFrontWall.position.set(SEC_CENTER_X, SEC_H / 2, -SEC_D / 2);
         secFrontWall.receiveShadow = true;
         secretRoomGroup.add(secFrontWall);
 
         // Secret Back Wall (Z = +3.50)
-        const secBackWall = new THREE.Mesh(new THREE.PlaneGeometry(SEC_W, SEC_H), secWallMat);
+        const secBackWall = new THREE.Mesh(new THREE.PlaneGeometry(SEC_W, SEC_H), makeSecWallMat());
         secBackWall.position.set(SEC_CENTER_X, SEC_H / 2, SEC_D / 2);
         secBackWall.rotation.y = Math.PI;
         secBackWall.receiveShadow = true;
@@ -8952,7 +9438,7 @@ export const Room3DScene: React.FC = () => {
 
         const secPartitionFront = new THREE.Mesh(
           new THREE.PlaneGeometry(secPartFrontLen, PR_HEIGHT),
-          secWallMat
+          makeSecWallMat()
         );
         secPartitionFront.position.set(SEC_MAX_X, PR_HEIGHT / 2, (-PR_SIZE / 2 + PINK_BK_Z_MIN) / 2);
         secPartitionFront.rotation.y = -Math.PI / 2;
@@ -8961,7 +9447,7 @@ export const Room3DScene: React.FC = () => {
 
         const secPartitionRear = new THREE.Mesh(
           new THREE.PlaneGeometry(secPartRearLen, PR_HEIGHT),
-          secWallMat
+          makeSecWallMat()
         );
         secPartitionRear.position.set(SEC_MAX_X, PR_HEIGHT / 2, (PINK_BK_Z_MAX + PR_SIZE / 2) / 2);
         secPartitionRear.rotation.y = -Math.PI / 2;
@@ -8970,7 +9456,7 @@ export const Room3DScene: React.FC = () => {
 
         const secPartitionHeader = new THREE.Mesh(
           new THREE.PlaneGeometry(secDoorwayW, secHeaderH),
-          secWallMat
+          makeSecWallMat()
         );
         secPartitionHeader.position.set(SEC_MAX_X, PINK_BK_Y_MAX + secHeaderH / 2, (PINK_BK_Z_MIN + PINK_BK_Z_MAX) / 2);
         secPartitionHeader.rotation.y = -Math.PI / 2;
@@ -8979,8 +9465,8 @@ export const Room3DScene: React.FC = () => {
 
         // Doorway Passage Jambs & Architrave Trim (connecting X = -5.0 to X = -5.35)
         const passageTrimMat = new THREE.MeshStandardMaterial({
-          color: 0x3d271a,
-          roughness: 0.48,
+          color: 0xded6cf,
+          roughness: 0.52,
           polygonOffset: true,
           polygonOffsetFactor: -1,
           polygonOffsetUnits: -1,
@@ -9009,7 +9495,7 @@ export const Room3DScene: React.FC = () => {
 
         const thresholdPlate = new THREE.Mesh(
           new THREE.BoxGeometry(PASSAGE_DEPTH + 0.02, 0.012, BK_W + 0.02),
-          new THREE.MeshStandardMaterial({ color: 0x5a4232, roughness: 0.52 })
+          new THREE.MeshStandardMaterial({ color: 0xded6cf, roughness: 0.58 })
         );
         thresholdPlate.position.set(-5.0 - PASSAGE_DEPTH / 2, 0.006, BK_CENTER_Z);
         secretRoomGroup.add(thresholdPlate);
@@ -9117,389 +9603,87 @@ export const Room3DScene: React.FC = () => {
         secretInsideLeverHitboxRef.current = secLeverHitbox;
         secretRoomGroup.add(secInsideLeverGroup);
 
-        // 5. Secret Room Luxury Furnishings
-        // 5A. Ornate Vintage Medallion Persian Rug (3.6m × 2.6m)
-        const rugCanvas = document.createElement('canvas');
-        rugCanvas.width = 512;
-        rugCanvas.height = 384;
-        const rCtx = rugCanvas.getContext('2d');
-        if (rCtx) {
-          rCtx.fillStyle = '#6b1d1d';
-          rCtx.fillRect(0, 0, 512, 384);
-          rCtx.strokeStyle = '#d4af37';
-          rCtx.lineWidth = 14;
-          rCtx.strokeRect(18, 18, 476, 348);
-          rCtx.strokeStyle = '#1a334d';
-          rCtx.lineWidth = 8;
-          rCtx.strokeRect(32, 32, 448, 320);
+        // Light Blue-Gray 3-Seater Sofa on the Back Wall
+        const secSofaGroup = new THREE.Group();
+        secSofaGroup.position.set(SEC_CENTER_X, 0, 2.80); // Placed against back wall Z = +3.5
 
-          // Central ornate medallion
-          rCtx.fillStyle = '#1a334d';
-          rCtx.beginPath();
-          rCtx.ellipse(256, 192, 95, 68, 0, 0, Math.PI * 2);
-          rCtx.fill();
-          rCtx.strokeStyle = '#d4af37';
-          rCtx.lineWidth = 4;
-          rCtx.stroke();
-
-          rCtx.fillStyle = '#e8d8b0';
-          rCtx.beginPath();
-          rCtx.ellipse(256, 192, 48, 34, 0, 0, Math.PI * 2);
-          rCtx.fill();
-        }
-        const secRugTex = new THREE.CanvasTexture(rugCanvas);
-        secRugTex.colorSpace = THREE.SRGBColorSpace;
-        extraRoomTexturesToDispose.push(secRugTex);
-
-        const secRug = new THREE.Mesh(
-          new THREE.PlaneGeometry(3.6, 2.6),
-          new THREE.MeshStandardMaterial({ map: secRugTex, roughness: 0.92 })
-        );
-        secRug.rotation.x = -Math.PI / 2;
-        secRug.position.set(-8.85, 0.008, 0.60);
-        secRug.receiveShadow = true;
-        secretRoomGroup.add(secRug);
-
-        // 5B. Deep Burgundy Chesterfield Tufted Leather Sofa (at X = -8.85, Z = 1.65, facing -Z)
-        const chesterGroup = new THREE.Group();
-        chesterGroup.position.set(-8.85, 0, 1.65);
-
-        const sofaLeatherMat = new THREE.MeshStandardMaterial({
-          color: 0x541818, // Deep antique oxblood burgundy
-          roughness: 0.42,
-          metalness: 0.08,
-          envMapIntensity: 0.65,
+        const sofaFabricMat = new THREE.MeshStandardMaterial({
+          color: 0x9fb2c5, // Light blue-gray (淺藍灰色)
+          roughness: 0.82,
+          metalness: 0.02,
         });
-        const sofaWoodMat = new THREE.MeshStandardMaterial({ color: 0x2a170d, roughness: 0.55 });
+        const sofaWoodMat = new THREE.MeshStandardMaterial({
+          color: 0x2a170d,
+          roughness: 0.55,
+        });
 
-        // Sofa Base & Seat Cushion Slab
-        const sofaBase = new THREE.Mesh(new THREE.BoxGeometry(2.30, 0.22, 0.92), sofaLeatherMat);
+        // 1. Sofa Base & Plinth
+        const sofaBase = new THREE.Mesh(new THREE.BoxGeometry(2.35, 0.22, 0.90), sofaFabricMat);
         sofaBase.position.y = 0.20;
         sofaBase.castShadow = true;
-        chesterGroup.add(sofaBase);
+        secSofaGroup.add(sofaBase);
 
-        // 3 Plump Seat Cushions
-        [-0.68, 0, 0.68].forEach((cx) => {
-          const cushion = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.12, 0.72), sofaLeatherMat);
-          cushion.position.set(cx, 0.37, -0.04);
+        // 2. Three Plump Seat Cushions
+        [-0.72, 0, 0.72].forEach((cx) => {
+          const cushion = new THREE.Mesh(new THREE.BoxGeometry(0.70, 0.12, 0.74), sofaFabricMat);
+          cushion.position.set(cx, 0.37, -0.02);
           cushion.castShadow = true;
-          chesterGroup.add(cushion);
+          secSofaGroup.add(cushion);
         });
 
-        // Tufted Backrest with Rolled Crown
-        const sofaBack = new THREE.Mesh(new THREE.BoxGeometry(2.30, 0.52, 0.24), sofaLeatherMat);
-        sofaBack.position.set(0, 0.58, 0.36);
+        // 3. Backrest
+        const sofaBack = new THREE.Mesh(new THREE.BoxGeometry(2.35, 0.65, 0.24), sofaFabricMat);
+        sofaBack.position.set(0, 0.62, 0.35);
         sofaBack.castShadow = true;
-        chesterGroup.add(sofaBack);
+        secSofaGroup.add(sofaBack);
 
-        const rolledBackTop = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 2.30, 16), sofaLeatherMat);
-        rolledBackTop.rotation.z = Math.PI / 2;
-        rolledBackTop.position.set(0, 0.84, 0.36);
-        rolledBackTop.castShadow = true;
-        chesterGroup.add(rolledBackTop);
-
-        // Rolled Scroll Armrests
-        [-1.12, 1.12].forEach((ax) => {
-          const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.94, 16), sofaLeatherMat);
-          arm.rotation.x = Math.PI / 2;
-          arm.position.set(ax, 0.56, 0.02);
+        // 4. Armrests
+        [-1.18, 1.18].forEach((ax) => {
+          const arm = new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.55, 0.92), sofaFabricMat);
+          arm.position.set(ax, 0.45, 0.02);
           arm.castShadow = true;
-          chesterGroup.add(arm);
+          secSofaGroup.add(arm);
         });
 
-        // Turned Wooden Bun Feet
+        // 5. Turned Wooden Bun Feet
         [
-          [-1.05, -0.38],
-          [1.05, -0.38],
-          [-1.05, 0.38],
-          [1.05, 0.38],
+          [-1.08, -0.38],
+          [1.08, -0.38],
+          [-1.08, 0.38],
+          [1.08, 0.38],
         ].forEach(([fx, fz]) => {
           const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.030, 0.09, 12), sofaWoodMat);
           foot.position.set(fx, 0.045, fz);
           foot.castShadow = true;
-          chesterGroup.add(foot);
+          secSofaGroup.add(foot);
         });
 
-        // 2 Cozy Velvet Throw Pillows
-        const pillowMat = new THREE.MeshStandardMaterial({ color: 0x8a6b2d, roughness: 0.85 });
-        [-0.82, 0.82].forEach((px) => {
-          const pillow = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.32, 0.12), pillowMat);
-          pillow.position.set(px, 0.50, 0.16);
-          pillow.rotation.y = px > 0 ? -0.35 : 0.35;
+        // 6. Accent Throw Pillows
+        const pillowMat = new THREE.MeshStandardMaterial({ color: 0xd8e2ec, roughness: 0.85 });
+        [-0.85, 0.85].forEach((px) => {
+          const pillow = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.14), pillowMat);
+          pillow.position.set(px, 0.55, 0.18);
+          pillow.rotation.y = px > 0 ? -0.3 : 0.3;
           pillow.castShadow = true;
-          chesterGroup.add(pillow);
+          secSofaGroup.add(pillow);
         });
 
-        secretRoomGroup.add(chesterGroup);
+        secretRoomGroup.add(secSofaGroup);
 
-        // 5C. Carved Dark-Walnut Coffee Table with Open Grimoire & Glowing Candle
-        const secTableGroup = new THREE.Group();
-        secTableGroup.position.set(-8.85, 0, 0.62);
-
-        const tableTop = new THREE.Mesh(
-          new THREE.BoxGeometry(1.35, 0.045, 0.72),
-          beamMat
-        );
-        tableTop.position.y = 0.40;
-        tableTop.castShadow = true;
-        tableTop.receiveShadow = true;
-        secTableGroup.add(tableTop);
-
-        [-0.58, 0.58].forEach((tx) => {
-          [-0.28, 0.28].forEach((tz) => {
-            const tLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.022, 0.40, 10), beamMat);
-            tLeg.position.set(tx, 0.20, tz);
-            tLeg.castShadow = true;
-            secTableGroup.add(tLeg);
-          });
+        // Realistic Brown Glass Eyeball resting in back-left corner of Secret Room (阿璃的宿舍 密室區角落：棕色眼睛)
+        const secretCornerBrownEye = createGlassEyeball('brown', 0.082);
+        secretCornerBrownEye.position.set(SEC_MIN_X + 0.42, 0, SEC_D / 2 - 0.42);
+        secretCornerBrownEye.rotation.y = Math.PI * 0.74;
+        secretRoomGroup.add(secretCornerBrownEye);
+        registeredEyeballs.push({
+          id: 'brown',
+          roomId: 'pink',
+          code: 'EYE-05',
+          locationLabel: '宿舍密室角落・棕眼',
+          accentHex: 0xd97706,
+          accentCss: '#fbbf24',
+          eyeGroup: secretCornerBrownEye,
         });
-
-        // Open Leather Grimoire on Coffee Table
-        const bookMat = new THREE.MeshStandardMaterial({ color: 0x4a2a1b, roughness: 0.65 });
-        const pageMat = new THREE.MeshStandardMaterial({ color: 0xf1e7d0, roughness: 0.82 });
-        const openBookLeft = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.016, 0.24), pageMat);
-        openBookLeft.position.set(-0.16, 0.435, 0.02);
-        openBookLeft.rotation.z = -0.08;
-        secTableGroup.add(openBookLeft);
-
-        const openBookRight = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.016, 0.24), pageMat);
-        openBookRight.position.set(0.01, 0.435, 0.02);
-        openBookRight.rotation.z = 0.08;
-        secTableGroup.add(openBookRight);
-
-        // Brass Candlestick + Flickering Candle Flame
-        const candleStick = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.016, 0.038, 0.12, 12),
-          leverBrassMat
-        );
-        candleStick.position.set(0.32, 0.48, -0.12);
-        candleStick.castShadow = true;
-        secTableGroup.add(candleStick);
-
-        const candleWax = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.010, 0.010, 0.08, 10),
-          new THREE.MeshStandardMaterial({ color: 0xfffcf0, roughness: 0.35 })
-        );
-        candleWax.position.set(0.32, 0.58, -0.12);
-        secTableGroup.add(candleWax);
-
-        const candleFlame = new THREE.Mesh(
-          new THREE.SphereGeometry(0.008, 8, 8),
-          new THREE.MeshBasicMaterial({ color: 0xffb74d })
-        );
-        candleFlame.position.set(0.32, 0.63, -0.12);
-        secTableGroup.add(candleFlame);
-
-        const candleLight = new THREE.PointLight(0xffb042, 0.65, 3.2, 1.25);
-        candleLight.position.set(0.32, 0.66, -0.12);
-        secTableGroup.add(candleLight);
-
-        secretRoomGroup.add(secTableGroup);
-
-        // 5D. Twin Tufted Club Armchairs Flanking the Rug
-        [-1, 1].forEach((side) => {
-          const armChair = new THREE.Group();
-          armChair.position.set(-8.85 + side * 1.85, 0, 0.65);
-          armChair.rotation.y = -side * (Math.PI / 2 + 0.22);
-
-          const cBase = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.20, 0.82), sofaLeatherMat);
-          cBase.position.y = 0.18;
-          cBase.castShadow = true;
-          armChair.add(cBase);
-
-          const cSeat = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.11, 0.68), sofaLeatherMat);
-          cSeat.position.set(0, 0.34, 0.02);
-          cSeat.castShadow = true;
-          armChair.add(cSeat);
-
-          const cBack = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.58, 0.18), sofaLeatherMat);
-          cBack.position.set(0, 0.58, 0.34);
-          cBack.castShadow = true;
-          armChair.add(cBack);
-
-          [-0.37, 0.37].forEach((ax) => {
-            const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.82, 14), sofaLeatherMat);
-            arm.rotation.x = Math.PI / 2;
-            arm.position.set(ax, 0.52, 0);
-            arm.castShadow = true;
-            armChair.add(arm);
-          });
-
-          secretRoomGroup.add(armChair);
-        });
-
-        // 5E. Antique Executive Roll-Top Desk & Study Station (against front wall Z = -3.50)
-        const secDeskGroup = new THREE.Group();
-        secDeskGroup.position.set(-8.95, 0, -2.85);
-
-        const deskWoodMat = new THREE.MeshStandardMaterial({
-          color: 0x3a2216,
-          roughness: 0.44,
-          metalness: 0.03,
-          envMapIntensity: 0.52,
-        });
-
-        const dTop = new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.05, 0.90), deskWoodMat);
-        dTop.position.y = 0.74;
-        dTop.castShadow = true;
-        secDeskGroup.add(dTop);
-
-        // Left & Right Drawer Pedestals
-        [-0.72, 0.72].forEach((px) => {
-          const ped = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.71, 0.84), deskWoodMat);
-          ped.position.set(px, 0.36, 0);
-          ped.castShadow = true;
-          secDeskGroup.add(ped);
-        });
-
-        // Desk Hutch & Cubbies
-        const hutch = new THREE.Mesh(new THREE.BoxGeometry(1.92, 0.36, 0.28), deskWoodMat);
-        hutch.position.set(0, 0.94, -0.30);
-        hutch.castShadow = true;
-        secDeskGroup.add(hutch);
-
-        // Banker's Lamp with Emerald Translucent Shade & Warm Reading Glow
-        const bankerMat = new THREE.MeshPhysicalMaterial({
-          color: 0x1b7036,
-          roughness: 0.20,
-          metalness: 0.05,
-          transmission: 0.35,
-          clearcoat: 0.85,
-        });
-        const lampBase = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.075, 0.024, 16), leverBrassMat);
-        lampBase.position.set(-0.52, 0.78, -0.15);
-        secDeskGroup.add(lampBase);
-
-        const lampStem = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.22, 12), leverBrassMat);
-        lampStem.position.set(-0.52, 0.89, -0.15);
-        secDeskGroup.add(lampStem);
-
-        const lampShade = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.18, 16, 1, false, 0, Math.PI), bankerMat);
-        lampShade.rotation.z = Math.PI / 2;
-        lampShade.position.set(-0.52, 1.00, -0.15);
-        lampShade.castShadow = true;
-        secDeskGroup.add(lampShade);
-
-        const bankerLight = new THREE.PointLight(0xd4fcd7, 0.85, 3.8, 1.25);
-        bankerLight.position.set(-0.52, 0.95, -0.12);
-        secDeskGroup.add(bankerLight);
-
-        // Brass Armillary Sphere on Desk
-        const armillaryBase = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 0.03, 12), leverBrassMat);
-        armillaryBase.position.set(0.62, 0.78, -0.18);
-        secDeskGroup.add(armillaryBase);
-
-        const armRing1 = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.006, 8, 24), leverBrassMat);
-        armRing1.position.set(0.62, 0.90, -0.18);
-        armRing1.rotation.x = 0.45;
-        secDeskGroup.add(armRing1);
-
-        const armRing2 = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.005, 8, 24), leverBrassMat);
-        armRing2.position.set(0.62, 0.90, -0.18);
-        armRing2.rotation.y = 0.65;
-        secDeskGroup.add(armRing2);
-
-        // Swivel Leather Study Chair
-        const studyChair = new THREE.Group();
-        studyChair.position.set(0, 0, 0.65);
-        const sSeat = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.09, 0.52), sofaLeatherMat);
-        sSeat.position.y = 0.44;
-        studyChair.add(sSeat);
-        const sBack = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.58, 0.08), sofaLeatherMat);
-        sBack.position.set(0, 0.74, 0.22);
-        studyChair.add(sBack);
-        const sPost = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.026, 0.42, 12), leverBrassMat);
-        sPost.position.y = 0.21;
-        studyChair.add(sPost);
-        secDeskGroup.add(studyChair);
-
-        secretRoomGroup.add(secDeskGroup);
-
-        // 5F. Grand Archival Library Bookcases (along far left wall X = -12.35)
-        const libGroup = new THREE.Group();
-        libGroup.position.set(-12.13, 0, 0);
-        libGroup.rotation.y = Math.PI / 2;
-
-        const libWoodMat = new THREE.MeshStandardMaterial({ color: 0x2e1a10, roughness: 0.50 });
-        const libBack = new THREE.Mesh(new THREE.BoxGeometry(4.80, 2.70, 0.03), libWoodMat);
-        libBack.position.y = 1.35;
-        libGroup.add(libBack);
-
-        // Vertical Mullions & Outer Frame
-        [-2.40, -0.80, 0.80, 2.40].forEach((mx) => {
-          const mullion = new THREE.Mesh(new THREE.BoxGeometry(0.06, 2.70, 0.44), libWoodMat);
-          mullion.position.set(mx, 1.35, 0.22);
-          mullion.castShadow = true;
-          libGroup.add(mullion);
-        });
-
-        // 5 Shelf Tiers across the 3 bays
-        for (let sh = 0; sh <= 5; sh++) {
-          const sy = 0.12 + sh * 0.48;
-          const shelfMesh = new THREE.Mesh(new THREE.BoxGeometry(4.74, 0.035, 0.42), libWoodMat);
-          shelfMesh.position.set(0, sy, 0.21);
-          libGroup.add(shelfMesh);
-        }
-
-        // Shelf Accents: Glowing Amethyst Geodes on middle shelf
-        const geodeMat = new THREE.MeshPhysicalMaterial({
-          color: 0x9333ea,
-          emissive: 0x7e22ce,
-          emissiveIntensity: 0.75,
-          roughness: 0.18,
-          clearcoat: 0.90,
-        });
-        const geodeMesh = new THREE.Mesh(new THREE.DodecahedronGeometry(0.11, 1), geodeMat);
-        geodeMesh.position.set(0, 1.20, 0.25);
-        geodeMesh.rotation.set(0.4, 0.6, 0.2);
-        libGroup.add(geodeMesh);
-
-        const geodeLight = new THREE.PointLight(0xa855f7, 0.85, 3.2, 1.3);
-        geodeLight.position.set(0, 1.26, 0.28);
-        libGroup.add(geodeLight);
-
-        // Brass Astronomical Telescope on Tripod Stand
-        const teleGroup = new THREE.Group();
-        teleGroup.position.set(2.05, 0, 0.85);
-        const teleBase = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 1.20, 10), leverBrassMat);
-        teleBase.position.y = 0.60;
-        teleGroup.add(teleBase);
-        const teleTube = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.032, 0.95, 16), leverBrassMat);
-        teleTube.rotation.z = Math.PI / 4;
-        teleTube.position.set(0.12, 1.28, 0);
-        teleGroup.add(teleTube);
-        libGroup.add(teleGroup);
-
-        secretRoomGroup.add(libGroup);
-
-        // 5G. Central Caged Chandelier Illuminating the Secret Room
-        const chandelierGroup = new THREE.Group();
-        chandelierGroup.position.set(-8.85, 2.50, 0.20);
-
-        const chanChain = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.45, 8), leverSteelMat);
-        chanChain.position.y = 0.22;
-        chandelierGroup.add(chanChain);
-
-        const chanRing = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.018, 8, 24), leverBrassMat);
-        chanRing.rotation.x = Math.PI / 2;
-        chandelierGroup.add(chanRing);
-
-        for (let b = 0; b < 6; b++) {
-          const bAng = (b / 6) * Math.PI * 2;
-          const bulb = new THREE.Mesh(
-            new THREE.SphereGeometry(0.024, 10, 10),
-            new THREE.MeshBasicMaterial({ color: 0xffe6a3 })
-          );
-          bulb.position.set(Math.cos(bAng) * 0.42, 0.03, Math.sin(bAng) * 0.42);
-          chandelierGroup.add(bulb);
-        }
-
-        const chanMainLight = new THREE.PointLight(0xffecd2, 1.35, 10.5, 1.15);
-        chanMainLight.position.set(0, -0.05, 0);
-        chanMainLight.castShadow = true;
-        chandelierGroup.add(chanMainLight);
-
-        secretRoomGroup.add(chandelierGroup);
 
         coloredRoomGroup.add(secretRoomGroup);
 
@@ -10399,16 +10583,146 @@ export const Room3DScene: React.FC = () => {
           podGroup.position.y = tierIdx * POD_H;
           const isUpperOpen = tierIdx === 1;
 
-          // 1. Main 120×120×200 cm Capsule Body Housing
+          // 1. Main 120×120×300 cm Capsule Body Housing
           if (!isUpperOpen) {
-            const bodyShell = new THREE.Mesh(
-              new THREE.BoxGeometry(POD_W - 0.01, POD_H - 0.016, POD_L - 0.04),
+            // Hollowed Lower Capsule ('01') with a huge carved-out bottom hole so the circular slide is completely exposed
+            const wallT = 0.045;
+            const shellDepth = POD_L - 0.04;
+            const shellZ = 0.02;
+
+            // Narrow front threshold sill (z ∈ [-1.50, -1.20]) before the big bottom hole
+            const lowerFrontFloor = new THREE.Mesh(
+              new THREE.BoxGeometry(POD_W - 0.01, wallT, 0.30),
+              capInteriorWallMat
+            );
+            lowerFrontFloor.position.set(-0.005, wallT / 2 + 0.004, -POD_L / 2 + 0.15);
+            lowerFrontFloor.receiveShadow = true;
+            podGroup.add(lowerFrontFloor);
+
+            // Narrow rear floor sill (z ∈ [+1.32, +1.49])
+            const lowerRearFloor = new THREE.Mesh(
+              new THREE.BoxGeometry(POD_W - 0.01, wallT, 0.18),
+              capInteriorWallMat
+            );
+            lowerRearFloor.position.set(-0.005, wallT / 2 + 0.004, POD_L / 2 - 0.09);
+            lowerRearFloor.receiveShadow = true;
+            podGroup.add(lowerRearFloor);
+
+            // Narrow side floor ledges flanking the big bottom chute cutout (x = ±0.53)
+            [-0.535, 0.525].forEach((lx) => {
+              const sideFloor = new THREE.Mesh(
+                new THREE.BoxGeometry(0.13, wallT, 2.54),
+                capInteriorWallMat
+              );
+              sideFloor.position.set(lx, wallT / 2 + 0.004, 0.06);
+              sideFloor.receiveShadow = true;
+              podGroup.add(sideFloor);
+            });
+
+            // Beveled dark-slate collar framing the big carved-out bottom opening
+            const holeCollarGeo = new THREE.ExtrudeGeometry(
+              createRoundedRingShape(1.04, 2.62, 0.10, 0.92, 2.50, 0.45),
+              {
+                depth: 0.022,
+                bevelEnabled: true,
+                bevelThickness: 0.006,
+                bevelSize: 0.006,
+                bevelSegments: 2,
+                curveSegments: 20,
+              }
+            );
+            holeCollarGeo.rotateX(-Math.PI / 2);
+            const podHoleCollar = new THREE.Mesh(holeCollarGeo, capDarkTrimMat);
+            podHoleCollar.position.set(0, 0.024, 0.06);
+            podHoleCollar.receiveShadow = true;
+            podGroup.add(podHoleCollar);
+
+            // Deep dark vertical chute shaft plunging below room floor (y ∈ [-2.35, 0])
+            const shaftDepth = 2.35;
+            const shaftMat = new THREE.MeshStandardMaterial({
+              color: 0x0b111b,
+              roughness: 0.78,
+              metalness: 0.16,
+              side: THREE.DoubleSide,
+            });
+            const shaftLeftWall = new THREE.Mesh(new THREE.PlaneGeometry(2.58, shaftDepth), shaftMat);
+            shaftLeftWall.rotation.y = Math.PI / 2;
+            shaftLeftWall.position.set(-0.48, -shaftDepth / 2, 0.06);
+            podGroup.add(shaftLeftWall);
+
+            const shaftRightWall = new THREE.Mesh(new THREE.PlaneGeometry(2.58, shaftDepth), shaftMat);
+            shaftRightWall.rotation.y = -Math.PI / 2;
+            shaftRightWall.position.set(0.48, -shaftDepth / 2, 0.06);
+            podGroup.add(shaftRightWall);
+
+            const shaftFrontWall = new THREE.Mesh(new THREE.PlaneGeometry(0.96, shaftDepth), shaftMat);
+            shaftFrontWall.position.set(0, -shaftDepth / 2, -1.22);
+            podGroup.add(shaftFrontWall);
+
+            const shaftBackWall = new THREE.Mesh(new THREE.PlaneGeometry(0.96, shaftDepth), shaftMat);
+            shaftBackWall.rotation.y = Math.PI;
+            shaftBackWall.position.set(0, -shaftDepth / 2, 1.34);
+            podGroup.add(shaftBackWall);
+
+            const shaftFloorCap = new THREE.Mesh(
+              new THREE.PlaneGeometry(0.98, 2.58),
+              new THREE.MeshBasicMaterial({ color: 0x030508 })
+            );
+            shaftFloorCap.rotation.x = -Math.PI / 2;
+            shaftFloorCap.position.set(0, -shaftDepth, 0.06);
+            podGroup.add(shaftFloorCap);
+
+            // Subtle vertical cyan shaft guide strips along the pit walls for clear depth perception
+            const shaftGuideMat = new THREE.MeshBasicMaterial({
+              color: 0x38bdf8,
+              transparent: true,
+              opacity: 0.38,
+            });
+            [-0.465, 0.465].forEach((gx) => {
+              [-0.65, 0.25, 0.95].forEach((gz) => {
+                const strip = new THREE.Mesh(new THREE.BoxGeometry(0.012, shaftDepth - 0.16, 0.016), shaftGuideMat);
+                strip.position.set(gx, -shaftDepth / 2, gz);
+                podGroup.add(strip);
+              });
+            });
+
+            const podCeilingLower = new THREE.Mesh(
+              new THREE.BoxGeometry(POD_W - 0.01, wallT, shellDepth),
               capShellMat
             );
-            bodyShell.position.set(-0.005, POD_H / 2, 0.02);
-            bodyShell.castShadow = true;
-            bodyShell.receiveShadow = true;
-            podGroup.add(bodyShell);
+            podCeilingLower.position.set(-0.005, POD_H - wallT / 2 - 0.008, shellZ);
+            podCeilingLower.castShadow = true;
+            podGroup.add(podCeilingLower);
+
+            const podLeftWallLower = new THREE.Mesh(
+              new THREE.BoxGeometry(wallT, POD_H - 0.016, shellDepth),
+              capInteriorWallMat
+            );
+            podLeftWallLower.position.set(-POD_W / 2 + wallT / 2, POD_H / 2, shellZ);
+            podLeftWallLower.receiveShadow = true;
+            podGroup.add(podLeftWallLower);
+
+            const podRightWallLower = new THREE.Mesh(
+              new THREE.BoxGeometry(wallT, POD_H - 0.016, shellDepth),
+              capInteriorWallMat
+            );
+            podRightWallLower.position.set(POD_W / 2 - wallT / 2 - 0.01, POD_H / 2, shellZ);
+            podRightWallLower.receiveShadow = true;
+            podGroup.add(podRightWallLower);
+
+            const podBackWallLower = new THREE.Mesh(
+              new THREE.BoxGeometry(POD_W - 0.01, POD_H - 0.016, 0.05),
+              capWhiteOakMat
+            );
+            podBackWallLower.position.set(-0.005, POD_H / 2, POD_L / 2 - 0.025);
+            podBackWallLower.receiveShadow = true;
+            podGroup.add(podBackWallLower);
+
+            // Cool cyan-white interior light illuminating the exposed circular slide & pit once the door opens
+            const lowerPodLight = new THREE.PointLight(0x7dd3fc, 0.0, 5.2, 1.25);
+            lowerPodLight.position.set(0, POD_H - 0.16, -0.25);
+            lowerPodLightRef.current = lowerPodLight;
+            podGroup.add(lowerPodLight);
           } else {
             // Hollowed Upper Capsule ('02') so the hatch opens cleanly into a furnished cozy sleeping cabin
             const wallT = 0.045;
@@ -11432,37 +11746,44 @@ export const Room3DScene: React.FC = () => {
           podGroup.add(ledFrame);
 
           if (!isUpperOpen) {
-            // Lower Capsule ('01'): Closed hatch door + frosted window + grab handle + handwritten 「雜物」 note
+            // Lower Capsule ('01'): Closed hatch door with 7-click open interaction & downward slide inside
+            const lowerPodDoorPivot = new THREE.Group();
+            lowerPodDoorPivot.position.set(-0.55, 0, facadeZ + 0.036); // Left edge hinge
+            
+            const doorLeafContainer = new THREE.Group();
+            doorLeafContainer.position.set(0.55, 0, 0);
+            lowerPodDoorPivot.add(doorLeafContainer);
+
             const doorLeaf = new THREE.Mesh(podDoorGeo, capDoorMat);
             doorLeaf.rotation.y = Math.PI;
-            doorLeaf.position.set(0, POD_H / 2, facadeZ + 0.036);
+            doorLeaf.position.set(0, POD_H / 2, 0);
             doorLeaf.castShadow = true;
             doorLeaf.receiveShadow = true;
-            podGroup.add(doorLeaf);
+            doorLeafContainer.add(doorLeaf);
 
             const viewFrame = new THREE.Mesh(
               new THREE.CapsuleGeometry(0.072, 0.42, 8, 14),
               capDarkTrimMat
             );
             viewFrame.scale.set(1.0, 1.0, 0.25);
-            viewFrame.position.set(-0.18, POD_H / 2 + 0.02, facadeZ + 0.004);
-            podGroup.add(viewFrame);
+            viewFrame.position.set(-0.18, POD_H / 2 + 0.02, -0.032);
+            doorLeafContainer.add(viewFrame);
 
             const viewGlass = new THREE.Mesh(
               new THREE.CapsuleGeometry(0.058, 0.39, 8, 14),
               capWindowMat
             );
             viewGlass.scale.set(1.0, 1.0, 0.22);
-            viewGlass.position.set(-0.18, POD_H / 2 + 0.02, facadeZ + 0.001);
-            podGroup.add(viewGlass);
+            viewGlass.position.set(-0.18, POD_H / 2 + 0.02, -0.035);
+            doorLeafContainer.add(viewGlass);
 
             const doorHandle = new THREE.Mesh(
               new THREE.CapsuleGeometry(0.011, 0.24, 6, 12),
               capMetalMat
             );
-            doorHandle.position.set(0.28, POD_H / 2, facadeZ - 0.006);
+            doorHandle.position.set(0.28, POD_H / 2, -0.042);
             doorHandle.castShadow = true;
-            podGroup.add(doorHandle);
+            doorLeafContainer.add(doorHandle);
 
             // Handwritten paper note 「雜物」 taped flat on lower pod door
             const zhaWuNoteMesh = new THREE.Mesh(
@@ -11471,8 +11792,8 @@ export const Room3DScene: React.FC = () => {
             );
             zhaWuNoteMesh.rotation.y = Math.PI;
             zhaWuNoteMesh.rotation.z = 0.042;
-            zhaWuNoteMesh.position.set(0.06, POD_H / 2 + 0.02, facadeZ + 0.0015);
-            podGroup.add(zhaWuNoteMesh);
+            zhaWuNoteMesh.position.set(0.06, POD_H / 2 + 0.02, -0.0345);
+            doorLeafContainer.add(zhaWuNoteMesh);
 
             const noteTape = new THREE.Mesh(
               new THREE.PlaneGeometry(0.085, 0.024),
@@ -11480,8 +11801,181 @@ export const Room3DScene: React.FC = () => {
             );
             noteTape.rotation.y = Math.PI;
             noteTape.rotation.z = -0.05;
-            noteTape.position.set(0.054, POD_H / 2 + 0.165, facadeZ + 0.0005);
-            podGroup.add(noteTape);
+            noteTape.position.set(0.054, POD_H / 2 + 0.165, -0.0355);
+            doorLeafContainer.add(noteTape);
+
+            podGroup.add(lowerPodDoorPivot);
+            lowerPodDoorPivotRef.current = lowerPodDoorPivot;
+
+            // Hitbox for lower pod door (7 clicks to open)
+            const lowerHitbox = new THREE.Mesh(
+              new THREE.BoxGeometry(1.0, 1.0, 0.16),
+              new THREE.MeshBasicMaterial({ visible: false })
+            );
+            lowerHitbox.name = 'lower_capsule_door_hitbox';
+            lowerHitbox.position.set(0, POD_H / 2, facadeZ + 0.036);
+            lowerPodHitboxRef.current = lowerHitbox;
+            podGroup.add(lowerHitbox);
+
+            // Exposed 360-Degree Circular Tube Slide descending cleanly through the carved-out bottom hole
+            const slideGroup = new THREE.Group();
+            slideGroup.position.set(0, 0, 0);
+
+            const slideCurve = new THREE.CatmullRomCurve3([
+              new THREE.Vector3(0, 0.38, facadeZ + 0.26),
+              new THREE.Vector3(0, 0.25, facadeZ + 0.78),
+              new THREE.Vector3(0, -0.14, facadeZ + 1.44),
+              new THREE.Vector3(0, -0.80, facadeZ + 2.12),
+              new THREE.Vector3(0, -1.86, facadeZ + 2.72),
+            ]);
+
+            const SLIDE_R = 0.35;
+            const SEG_U = 64;
+            const worldUpVec = new THREE.Vector3(0, 1, 0);
+
+            const getSlideBankFrame = (u: number) => {
+              const pt = slideCurve.getPoint(u);
+              const tang = slideCurve.getTangent(u).normalize();
+              const bankRight = new THREE.Vector3().crossVectors(worldUpVec, tang).normalize();
+              const bankUp = new THREE.Vector3().crossVectors(tang, bankRight).normalize();
+              return { pt, tang, bankRight, bankUp };
+            };
+
+            // 1. Glossy solid sky-blue lower semicircular bed inside the circular tube
+            const SEG_BED_V = 18;
+            const bedPositions: number[] = [];
+            const bedIndices: number[] = [];
+            for (let i = 0; i <= SEG_U; i++) {
+              const u = i / SEG_U;
+              const { pt, bankRight, bankUp } = getSlideBankFrame(u);
+              for (let j = 0; j <= SEG_BED_V; j++) {
+                const v = j / SEG_BED_V;
+                const theta = Math.PI * 0.94 + v * (Math.PI * 1.12);
+                const rBed = SLIDE_R - 0.008;
+                const localX = Math.cos(theta) * rBed;
+                const localUp = Math.sin(theta) * rBed;
+                bedPositions.push(
+                  pt.x + bankRight.x * localX + bankUp.x * localUp,
+                  pt.y + bankRight.y * localX + bankUp.y * localUp,
+                  pt.z + bankRight.z * localX + bankUp.z * localUp
+                );
+              }
+            }
+            for (let i = 0; i < SEG_U; i++) {
+              for (let j = 0; j < SEG_BED_V; j++) {
+                const a = i * (SEG_BED_V + 1) + j;
+                const b = (i + 1) * (SEG_BED_V + 1) + j;
+                const c = (i + 1) * (SEG_BED_V + 1) + (j + 1);
+                const d = i * (SEG_BED_V + 1) + (j + 1);
+                bedIndices.push(a, b, d, b, c, d);
+              }
+            }
+            const slideBedGeo = new THREE.BufferGeometry();
+            slideBedGeo.setAttribute('position', new THREE.Float32BufferAttribute(bedPositions, 3));
+            slideBedGeo.setIndex(bedIndices);
+            slideBedGeo.computeVertexNormals();
+
+            const slideBedMat = new THREE.MeshPhysicalMaterial({
+              color: 0x0ea5e9,
+              roughness: 0.14,
+              metalness: 0.34,
+              clearcoat: 0.95,
+              clearcoatRoughness: 0.06,
+              envMapIntensity: 1.35,
+              side: THREE.DoubleSide,
+            });
+            const slideBedMesh = new THREE.Mesh(slideBedGeo, slideBedMat);
+            slideBedMesh.castShadow = true;
+            slideBedMesh.receiveShadow = true;
+            slideGroup.add(slideBedMesh);
+
+            // 2. Full 360-degree glossy translucent ice-cyan circular tube shell
+            const slideTubeGeo = new THREE.TubeGeometry(slideCurve, SEG_U, SLIDE_R, 32, false);
+            const slideTubeMat = new THREE.MeshPhysicalMaterial({
+              color: 0x7dd3fc,
+              roughness: 0.10,
+              metalness: 0.14,
+              clearcoat: 1.0,
+              clearcoatRoughness: 0.05,
+              envMapIntensity: 1.45,
+              transparent: true,
+              opacity: 0.66,
+              depthWrite: false,
+              side: THREE.DoubleSide,
+            });
+            const slideTubeMesh = new THREE.Mesh(slideTubeGeo, slideTubeMat);
+            slideTubeMesh.renderOrder = 2;
+            slideGroup.add(slideTubeMesh);
+
+            // 3. Sculpted circular bell-mouth collar + brushed-metal entry flange at the doorway
+            const entryFrame = getSlideBankFrame(0);
+            const entryBasis = new THREE.Matrix4().makeBasis(entryFrame.bankRight, entryFrame.bankUp, entryFrame.tang);
+
+            const entryRing = new THREE.Mesh(
+              new THREE.TorusGeometry(SLIDE_R + 0.014, 0.044, 20, 44),
+              new THREE.MeshPhysicalMaterial({
+                color: 0x38bdf8,
+                roughness: 0.14,
+                metalness: 0.32,
+                clearcoat: 0.95,
+                envMapIntensity: 1.35,
+              })
+            );
+            entryRing.position.copy(entryFrame.pt);
+            entryRing.quaternion.setFromRotationMatrix(entryBasis);
+            entryRing.castShadow = true;
+            slideGroup.add(entryRing);
+
+            const entryChromeRim = new THREE.Mesh(
+              new THREE.TorusGeometry(SLIDE_R + 0.048, 0.012, 12, 44),
+              capMetalMat
+            );
+            entryChromeRim.position.copy(entryFrame.pt);
+            entryChromeRim.quaternion.setFromRotationMatrix(entryBasis);
+            slideGroup.add(entryChromeRim);
+
+            // Sleek support cradle beneath the circular entry mouth resting on the front sill
+            const entrySupport = new THREE.Mesh(
+              new THREE.BoxGeometry(0.46, 0.07, 0.14),
+              capDarkTrimMat
+            );
+            entrySupport.position.set(0, 0.045, facadeZ + 0.24);
+            slideGroup.add(entrySupport);
+
+            // 4. Full 360-degree glowing circular rib rings pulsing smoothly down the round slide
+            slideSpeedRingsRef.current = [];
+            [0.11, 0.24, 0.38, 0.52, 0.66, 0.80, 0.93].forEach((uPos) => {
+              const { pt, tang, bankRight, bankUp } = getSlideBankFrame(uPos);
+              const ringMat = new THREE.MeshBasicMaterial({
+                color: 0xbae6fd,
+                transparent: true,
+                opacity: 0.62,
+                side: THREE.DoubleSide,
+              });
+              const ring = new THREE.Mesh(
+                new THREE.TorusGeometry(SLIDE_R + 0.016, 0.015, 12, 36),
+                ringMat
+              );
+              ring.position.copy(pt);
+              const basis = new THREE.Matrix4().makeBasis(bankRight, bankUp, tang);
+              ring.quaternion.setFromRotationMatrix(basis);
+              slideSpeedRingsRef.current.push(ring);
+              slideGroup.add(ring);
+            });
+
+            // Generous invisible hitbox over the circular slide mouth & exposed shaft
+            const slideHitbox = new THREE.Mesh(
+              new THREE.BoxGeometry(0.92, 0.92, 1.95),
+              new THREE.MeshBasicMaterial({ visible: false })
+            );
+            slideHitbox.name = 'lower_capsule_slide_hitbox';
+            slideHitbox.position.set(0, POD_H / 2 - 0.12, facadeZ + 0.90);
+            lowerPodSlideHitboxRef.current = slideHitbox;
+            slideGroup.add(slideHitbox);
+
+            slideGroup.visible = false;
+            podGroup.add(slideGroup);
+            lowerPodSlideGroupRef.current = slideGroup;
           } else {
             // Upper Capsule ('02'): Slid-open hatch pocket door panel tucked neatly on left edge, opening clearly into interior
             const openDoorPanel = new THREE.Mesh(podOpenDoorGeo, capDoorMat);
@@ -13386,11 +13880,32 @@ export const Room3DScene: React.FC = () => {
           ] as const
         ).forEach(({ x, rotY }) => {
           let cursorZ = -totalCabSpan / 2;
-          G_CAB_WIDTHS.forEach((cabWidth) => {
+          G_CAB_WIDTHS.forEach((cabWidth, cabIdx) => {
             const centerZ = cursorZ + cabWidth / 2;
             const sideCab = createGreenSideCabinet(cabWidth);
             sideCab.position.set(x, 0, centerZ);
             sideCab.rotation.y = rotY;
+
+            // Realistic Blue Glass Eyeball on rightmost edge of 2nd tier in 3rd left-wall cabinet (迷你像素紀念館左側第三個櫃子第二層最右邊：藍色眼睛)
+            if (x === leftWallCabX && cabIdx === 2) {
+              const bodyHeight = G_CAB_HEIGHT - G_PLINTH_H - G_CROWN_H;
+              const tierPitch = (bodyHeight - G_SHELF_THICK) / 6;
+              const tier2SurfaceY = G_PLINTH_H + G_SHELF_THICK + tierPitch;
+              const greenCabBlueEye = createGlassEyeball('blue', 0.066);
+              greenCabBlueEye.position.set(cabWidth / 2 - G_SIDE_THICK - 0.14, tier2SurfaceY, 0.17);
+              greenCabBlueEye.rotation.y = 0.60;
+              sideCab.add(greenCabBlueEye);
+              registeredEyeballs.push({
+                id: 'blue',
+                roomId: 'green',
+                code: 'EYE-02',
+                locationLabel: '像素紀念館・藍眼',
+                accentHex: 0x38bdf8,
+                accentCss: '#38bdf8',
+                eyeGroup: greenCabBlueEye,
+              });
+            }
+
             coloredRoomGroup.add(sideCab);
             cursorZ += cabWidth + G_CAB_GAP;
           });
@@ -14860,6 +15375,21 @@ export const Room3DScene: React.FC = () => {
         exteriorVistaGroup.add(clusterGroup);
       }
 
+      // Realistic Red Glass Eyeball nestled in the middle of the Lily of the Valley planter (浴室區 陽台花臺中間：紅色眼睛)
+      const balconyPlanterRedEye = createGlassEyeball('red', 0.072);
+      balconyPlanterRedEye.position.set(PLANTER_X, BALC_FLOOR_Y + 0.371, PLANTER_Z - 0.065);
+      balconyPlanterRedEye.rotation.y = Math.PI + 0.22;
+      exteriorVistaGroup.add(balconyPlanterRedEye);
+      registeredEyeballs.push({
+        id: 'red',
+        roomId: 'bathroom',
+        code: 'EYE-04',
+        locationLabel: '浴室陽台花臺・紅眼',
+        accentHex: 0xef4444,
+        accentCss: '#f87171',
+        eyeGroup: balconyPlanterRedEye,
+      });
+
       // Warm low outdoor terrace lantern accents flanking the planter box
       [PLANTER_X - PLANTER_W / 2 - 0.06, PLANTER_X + PLANTER_W / 2 + 0.06].forEach((lx) => {
         const lanternPost = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.34, 0.075), railPostMat);
@@ -15639,6 +16169,75 @@ export const Room3DScene: React.FC = () => {
 
       bathGroup.add(toiletGroup);
 
+      // 8B. One-Way Floor Trapdoor Hatch (balcony teak floor in front of 3-tier cabinet at X = 1.05, Z = 3.66; emerges from B4 Basement Stairs)
+      const bathFloorHatchGroup = new THREE.Group();
+      bathFloorHatchGroup.position.set(1.05, BALC_FLOOR_Y, 3.66);
+
+      const bathHatchFrameMat = new THREE.MeshStandardMaterial({
+        color: 0x262e3a,
+        roughness: 0.42,
+        metalness: 0.45,
+      });
+      const bathHatchTex = createDeckPlankTex();
+      bathHatchTex.repeat.set(0.65, 0.65);
+      const bathHatchLeafMat = new THREE.MeshStandardMaterial({
+        map: bathHatchTex,
+        color: 0xe6d6c4,
+        roughness: 0.72,
+        metalness: 0.04,
+      });
+
+      const BATH_HATCH_OUTER = 1.02;
+      const BATH_HATCH_INNER = 0.84;
+      const bathCurbW = (BATH_HATCH_OUTER - BATH_HATCH_INNER) * 0.5;
+      [
+        [BATH_HATCH_OUTER, 0.020, bathCurbW, 0, 0.010, -BATH_HATCH_OUTER / 2 + bathCurbW / 2],
+        [BATH_HATCH_OUTER, 0.020, bathCurbW, 0, 0.010, BATH_HATCH_OUTER / 2 - bathCurbW / 2],
+        [bathCurbW, 0.020, BATH_HATCH_INNER, -BATH_HATCH_OUTER / 2 + bathCurbW / 2, 0.010, 0],
+        [bathCurbW, 0.020, BATH_HATCH_INNER, BATH_HATCH_OUTER / 2 - bathCurbW / 2, 0.010, 0],
+      ].forEach(([cw, ch, cd, cx, cy, cz]) => {
+        const curb = new THREE.Mesh(new THREE.BoxGeometry(cw, ch, cd), bathHatchFrameMat);
+        curb.position.set(cx, cy, cz);
+        curb.receiveShadow = true;
+        bathFloorHatchGroup.add(curb);
+      });
+
+      // Dark stairwell pit underneath the hatch (only revealed while emerging from below)
+      const bathHatchPitBottom = new THREE.Mesh(
+        new THREE.PlaneGeometry(BATH_HATCH_INNER, BATH_HATCH_INNER),
+        new THREE.MeshBasicMaterial({ color: 0x06090e })
+      );
+      bathHatchPitBottom.rotation.x = -Math.PI / 2;
+      bathHatchPitBottom.position.y = 0.004;
+      bathFloorHatchGroup.add(bathHatchPitBottom);
+
+      // Hinged one-way teak-deck trapdoor leaf (pivots along -Z edge so it opens cleanly away from arrival)
+      const bathHatchPivot = new THREE.Group();
+      bathHatchPivot.position.set(0, 0.020, -BATH_HATCH_INNER / 2);
+
+      const bathHatchLeaf = new THREE.Mesh(
+        new THREE.BoxGeometry(BATH_HATCH_INNER - 0.01, 0.018, BATH_HATCH_INNER - 0.01),
+        bathHatchLeafMat
+      );
+      bathHatchLeaf.position.set(0, 0.0, BATH_HATCH_INNER / 2);
+      bathHatchLeaf.castShadow = true;
+      bathHatchLeaf.receiveShadow = true;
+      bathHatchPivot.add(bathHatchLeaf);
+
+      // Brushed dark metal flush hinges & recessed seal plate (one-way from below, non-openable from balcony)
+      [-0.26, 0.26].forEach((hx) => {
+        const hinge = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.010, 0.042), tubChromeMat);
+        hinge.position.set(hx, 0.011, 0.02);
+        bathHatchPivot.add(hinge);
+      });
+      const bathFlushPlate = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.006, 0.13), tubChromeMat);
+      bathFlushPlate.position.set(0, 0.011, BATH_HATCH_INNER - 0.13);
+      bathHatchPivot.add(bathFlushPlate);
+
+      bathHatchPivotRef.current = bathHatchPivot;
+      bathFloorHatchGroup.add(bathHatchPivot);
+      exteriorVistaGroup.add(bathFloorHatchGroup);
+
       // 9. Dual Recessed Overhead Bathroom Ceiling LED Panels + Moonlight Balcony Window Fill & Tub Accent Lighting
       [-1.15, 1.25].forEach((cz) => {
         const bathCeilingFrame = new THREE.Mesh(
@@ -15682,6 +16281,1225 @@ export const Room3DScene: React.FC = () => {
 
     buildBathroomRoom();
 
+    // --- 5G. UNDERGROUND BASEMENT ROOM ('basement' - B4 15×10m 深胡桃木天花板 & 灰石地板) ---
+    const BSMT_W = 15.0;
+    const BSMT_D = 10.0;
+    const BSMT_H = 3.4;
+    const BSMT_SLIDE_X = -6.35;
+    const BSMT_SLIDE_Z = -2.00;
+
+    const buildBasementRoom = () => {
+      const roomState = extraRoomsRef.current.basement;
+      const baseGroup = new THREE.Group();
+      baseGroup.visible = activeRoomRef.current === 'basement';
+      roomState.roomGroup = baseGroup;
+
+      roomState.defaultPlaqueTitle = 'B4';
+      roomState.plaqueTitles = {};
+
+      // 1. Gray Stone Floor (灰石地板 - Ashlar Slate/Limestone Flagstone Tiles + Mortar Joints + Bump)
+      const createGrayStoneFloorTextures = () => {
+        const c = document.createElement('canvas');
+        c.width = 1024;
+        c.height = 1024;
+        const ctx = c.getContext('2d');
+
+        const bc = document.createElement('canvas');
+        bc.width = 512;
+        bc.height = 512;
+        const bctx = bc.getContext('2d');
+
+        if (ctx && bctx) {
+          // Recessed dark gray mortar grout base
+          ctx.fillStyle = '#31353b';
+          ctx.fillRect(0, 0, 1024, 1024);
+          bctx.fillStyle = '#363636';
+          bctx.fillRect(0, 0, 512, 512);
+
+          const rows = 8;
+          const cols = 4;
+          const tileH = 1024 / rows;
+          const tileW = 1024 / cols;
+          const grout = 7;
+          const stonePalette = [
+            '#6c727a', '#60666e', '#767c85', '#585d65',
+            '#676d76', '#70767f', '#5d626a', '#6a7079',
+          ];
+
+          let seed = 917;
+          const rand = () => {
+            seed = (seed * 16807) % 2147483647;
+            return (seed - 1) / 2147483646;
+          };
+
+          for (let r = 0; r < rows; r++) {
+            const y = r * tileH;
+            const shiftX = (r % 2) * (tileW * 0.5);
+            for (let col = -1; col <= cols; col++) {
+              const x = col * tileW + shiftX;
+              const sx = x + grout * 0.5;
+              const sy = y + grout * 0.5;
+              const sw = tileW - grout;
+              const sh = tileH - grout;
+
+              const baseColor = stonePalette[Math.floor(rand() * stonePalette.length)];
+              ctx.fillStyle = baseColor;
+              ctx.fillRect(sx, sy, sw, sh);
+
+              // Subtle stone surface height variation in bump map
+              const bVal = Math.floor(158 + rand() * 58);
+              bctx.fillStyle = `rgb(${bVal},${bVal},${bVal})`;
+              bctx.fillRect(sx * 0.5, sy * 0.5, sw * 0.5, sh * 0.5);
+
+              // Soft mottled mineral shading inside each stone slab
+              const grad = ctx.createLinearGradient(sx, sy, sx + sw, sy + sh);
+              grad.addColorStop(0, 'rgba(255, 255, 255, 0.08)');
+              grad.addColorStop(0.5, 'rgba(0, 0, 0, 0)');
+              grad.addColorStop(1, 'rgba(0, 0, 0, 0.12)');
+              ctx.fillStyle = grad;
+              ctx.fillRect(sx, sy, sw, sh);
+
+              // Delicate mineral quartz veins
+              ctx.strokeStyle = rand() > 0.45 ? 'rgba(215, 222, 232, 0.14)' : 'rgba(38, 42, 48, 0.16)';
+              ctx.lineWidth = 1.4;
+              ctx.beginPath();
+              const vx0 = sx + rand() * sw * 0.4;
+              const vy0 = sy + rand() * sh;
+              ctx.moveTo(vx0, vy0);
+              ctx.quadraticCurveTo(
+                sx + rand() * sw,
+                sy + rand() * sh,
+                sx + sw * (0.55 + rand() * 0.4),
+                sy + rand() * sh
+              );
+              ctx.stroke();
+
+              // Crisp chiseled stone edge highlight & bottom shadow bevel
+              ctx.fillStyle = 'rgba(225, 232, 240, 0.13)';
+              ctx.fillRect(sx, sy, sw, 2);
+              ctx.fillRect(sx, sy, 2, sh);
+              ctx.fillStyle = 'rgba(18, 20, 24, 0.25)';
+              ctx.fillRect(sx, sy + sh - 2.5, sw, 2.5);
+              ctx.fillRect(sx + sw - 2.5, sy, 2.5, sh);
+            }
+          }
+
+          // Fine granite/stone mineral grain speckles across entire floor
+          for (let i = 0; i < 6500; i++) {
+            const px = rand() * 1024;
+            const py = rand() * 1024;
+            const sz = 1 + rand() * 2.2;
+            ctx.fillStyle = rand() > 0.5 ? 'rgba(235, 240, 248, 0.09)' : 'rgba(22, 25, 30, 0.12)';
+            ctx.fillRect(px, py, sz, sz);
+            if (i % 2 === 0) {
+              bctx.fillStyle = rand() > 0.5 ? 'rgba(255,255,255,0.12)' : 'rgba(60,60,60,0.16)';
+              bctx.fillRect(px * 0.5, py * 0.5, sz * 0.6, sz * 0.6);
+            }
+          }
+        }
+
+        const colorTex = new THREE.CanvasTexture(c);
+        colorTex.colorSpace = THREE.SRGBColorSpace;
+        colorTex.wrapS = THREE.RepeatWrapping;
+        colorTex.wrapT = THREE.RepeatWrapping;
+        colorTex.repeat.set(6.4, 4.3);
+        colorTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        extraRoomTexturesToDispose.push(colorTex);
+
+        const bumpTex = new THREE.CanvasTexture(bc);
+        bumpTex.wrapS = THREE.RepeatWrapping;
+        bumpTex.wrapT = THREE.RepeatWrapping;
+        bumpTex.repeat.set(6.4, 4.3);
+        bumpTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        extraRoomTexturesToDispose.push(bumpTex);
+
+        return { colorTex, bumpTex };
+      };
+
+      // 2. Deep Walnut Wood Ceiling Texture (深胡桃木天花板)
+      const createDeepWalnutCeilingTexture = () => {
+        const c = document.createElement('canvas');
+        c.width = 1024;
+        c.height = 1024;
+        const ctx = c.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = '#180c06';
+          ctx.fillRect(0, 0, 1024, 1024);
+
+          const rows = 12;
+          const rowH = 1024 / rows;
+          const cols = 3;
+          const colW = 1024 / cols;
+          const walnutPalette = [
+            '#3a2012', '#311a0e', '#422515', '#29150a',
+            '#361d0f', '#2f190d', '#3d2213', '#2c170b',
+          ];
+
+          let seed = 431;
+          const rand = () => {
+            seed = (seed * 16807) % 2147483647;
+            return (seed - 1) / 2147483646;
+          };
+
+          for (let r = 0; r < rows; r++) {
+            const y = r * rowH;
+            const shift = (r % 2) * (colW * 0.5);
+            for (let col = -1; col <= cols; col++) {
+              const x = col * colW + shift;
+              const idx = Math.floor(rand() * walnutPalette.length);
+              ctx.fillStyle = walnutPalette[idx];
+              ctx.fillRect(x + 1.5, y + 1.5, colW - 3, rowH - 3);
+
+              // Rich flowing walnut wood grain waves
+              for (let g = 4; g < rowH - 4; g += 4) {
+                ctx.fillStyle = g % 8 === 0 ? 'rgba(12, 5, 2, 0.38)' : 'rgba(188, 122, 74, 0.08)';
+                ctx.fillRect(x + 2, y + g + Math.sin(col + g * 0.15) * 1.2, colW - 4, 1.6);
+              }
+
+              // Deep bevel plank seam
+              ctx.fillStyle = 'rgba(8, 3, 1, 0.85)';
+              ctx.fillRect(x, y + rowH - 3, colW, 3);
+              ctx.fillRect(x + colW - 3, y, 3, rowH);
+            }
+          }
+        }
+        const tex = new THREE.CanvasTexture(c);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(5.2, 4.3);
+        tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        extraRoomTexturesToDispose.push(tex);
+        return tex;
+      };
+
+      const { colorTex: stoneFloorTex, bumpTex: stoneBumpTex } = createGrayStoneFloorTextures();
+      const walnutCeilingTex = createDeepWalnutCeilingTexture();
+
+      const basementFloor = new THREE.Mesh(
+        new THREE.PlaneGeometry(BSMT_W, BSMT_D),
+        new THREE.MeshStandardMaterial({
+          map: stoneFloorTex,
+          bumpMap: stoneBumpTex,
+          bumpScale: 0.014,
+          roughness: 0.78,
+          metalness: 0.04,
+          envMapIntensity: 0.36,
+        })
+      );
+      basementFloor.rotation.x = -Math.PI / 2;
+      basementFloor.receiveShadow = true;
+      baseGroup.add(basementFloor);
+
+      // Deep Walnut Wood Ceiling + Architectural Walnut Ceiling Beams (深胡桃木天花板與實木橫樑)
+      const walnutCeilingMat = new THREE.MeshStandardMaterial({
+        map: walnutCeilingTex,
+        color: 0xffffff,
+        roughness: 0.54,
+        metalness: 0.05,
+        envMapIntensity: 0.42,
+      });
+      const basementCeiling = new THREE.Mesh(
+        new THREE.PlaneGeometry(BSMT_W, BSMT_D),
+        walnutCeilingMat
+      );
+      basementCeiling.position.y = BSMT_H;
+      basementCeiling.rotation.x = Math.PI / 2;
+      basementCeiling.receiveShadow = true;
+      baseGroup.add(basementCeiling);
+
+      const walnutBeamMat = new THREE.MeshStandardMaterial({
+        map: walnutCeilingTex,
+        color: 0xe6d4c5,
+        roughness: 0.50,
+        metalness: 0.06,
+        envMapIntensity: 0.45,
+      });
+      [-3.75, -2.25, -0.75, 0.75, 2.25, 3.75].forEach((bz) => {
+        const beam = new THREE.Mesh(
+          new THREE.BoxGeometry(BSMT_W - 0.02, 0.14, 0.20),
+          walnutBeamMat
+        );
+        beam.position.set(0, BSMT_H - 0.07, bz);
+        beam.castShadow = true;
+        beam.receiveShadow = true;
+        baseGroup.add(beam);
+      });
+      // Side walnut ceiling perimeter cornice molding
+      [-BSMT_W / 2 + 0.05, BSMT_W / 2 - 0.05].forEach((bx) => {
+        const sideTrim = new THREE.Mesh(
+          new THREE.BoxGeometry(0.10, 0.11, BSMT_D),
+          walnutBeamMat
+        );
+        sideTrim.position.set(bx, BSMT_H - 0.055, 0);
+        baseGroup.add(sideTrim);
+      });
+      [-BSMT_D / 2 + 0.05, BSMT_D / 2 - 0.05].forEach((bz) => {
+        const endTrim = new THREE.Mesh(
+          new THREE.BoxGeometry(BSMT_W, 0.11, 0.10),
+          walnutBeamMat
+        );
+        endTrim.position.set(0, BSMT_H - 0.055, bz);
+        baseGroup.add(endTrim);
+      });
+
+      // 3. Coordinated Stone-Plaster Walls + Gray Stone Baseboards
+      const createBasementWallTex = () => {
+        const c = document.createElement('canvas');
+        c.width = 512;
+        c.height = 512;
+        const ctx = c.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = '#3b3f46';
+          ctx.fillRect(0, 0, 512, 512);
+          for (let i = 0; i < 3600; i++) {
+            const px = ((Math.sin(i * 19.3) * 0.5 + 0.5) * 512);
+            const py = ((Math.cos(i * 41.7) * 0.5 + 0.5) * 512);
+            ctx.fillStyle = i % 2 === 0 ? 'rgba(255,255,255,0.035)' : 'rgba(0,0,0,0.055)';
+            ctx.fillRect(px, py, 3, 2);
+          }
+          // Subtle horizontal architectural stone dado line at 1.05m height
+          ctx.fillStyle = 'rgba(25, 28, 32, 0.55)';
+          ctx.fillRect(0, 332, 512, 4);
+          ctx.fillStyle = 'rgba(210, 218, 228, 0.12)';
+          ctx.fillRect(0, 336, 512, 2);
+        }
+        const tex = new THREE.CanvasTexture(c);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.ClampToEdgeWrapping;
+        tex.repeat.set(6, 1);
+        extraRoomTexturesToDispose.push(tex);
+        return tex;
+      };
+
+      const basementWallMat = new THREE.MeshStandardMaterial({
+        map: createBasementWallTex(),
+        roughness: 0.84,
+        metalness: 0.03,
+        envMapIntensity: 0.28,
+      });
+
+      const baseWalls: Array<{ w: number; h: number; x: number; y: number; z: number; ry: number }> = [
+        { w: BSMT_W, h: BSMT_H, x: 0, y: BSMT_H / 2, z: -BSMT_D / 2, ry: 0 },
+        { w: BSMT_W, h: BSMT_H, x: 0, y: BSMT_H / 2, z: BSMT_D / 2, ry: Math.PI },
+        { w: BSMT_D, h: BSMT_H, x: -BSMT_W / 2, y: BSMT_H / 2, z: 0, ry: Math.PI / 2 },
+        { w: BSMT_D, h: BSMT_H, x: BSMT_W / 2, y: BSMT_H / 2, z: 0, ry: -Math.PI / 2 },
+      ];
+      baseWalls.forEach((wSpec) => {
+        const wMesh = new THREE.Mesh(new THREE.PlaneGeometry(wSpec.w, wSpec.h), basementWallMat);
+        wMesh.position.set(wSpec.x, wSpec.y, wSpec.z);
+        wMesh.rotation.y = wSpec.ry;
+        wMesh.receiveShadow = true;
+        baseGroup.add(wMesh);
+      });
+
+      const stoneSkirtMat = new THREE.MeshStandardMaterial({
+        color: 0x4b5058,
+        roughness: 0.76,
+        metalness: 0.05,
+      });
+      [
+        [BSMT_W, 0.11, 0.03, 0, 0.055, -BSMT_D / 2 + 0.015],
+        [BSMT_W, 0.11, 0.03, 0, 0.055, BSMT_D / 2 - 0.015],
+        [0.03, 0.11, BSMT_D, -BSMT_W / 2 + 0.015, 0.055, 0],
+        [0.03, 0.11, BSMT_D, BSMT_W / 2 - 0.015, 0.055, 0],
+      ].forEach(([sw, sh, sd, sx, sy, sz]) => {
+        const skirt = new THREE.Mesh(new THREE.BoxGeometry(sw, sh, sd), stoneSkirtMat);
+        skirt.position.set(sx, sy, sz);
+        skirt.receiveShadow = true;
+        baseGroup.add(skirt);
+      });
+
+      // 4. Straight Slide Exit Chute Arriving in Front-Left Corner + Padded Landing Mat (角落直式溜滑梯出口與緩衝軟墊)
+      const slideExitGroup = new THREE.Group();
+      slideExitGroup.position.set(BSMT_SLIDE_X, 0, BSMT_SLIDE_Z);
+
+      // Ceiling chute collar hatch where the straight slide enters through the deep walnut ceiling
+      const chuteCeilingFrame = new THREE.Mesh(
+        new THREE.BoxGeometry(1.12, 0.18, 1.36),
+        new THREE.MeshStandardMaterial({ color: 0x1e242c, roughness: 0.42, metalness: 0.55 })
+      );
+      chuteCeilingFrame.position.set(0, BSMT_H - 0.08, -2.50);
+      slideExitGroup.add(chuteCeilingFrame);
+
+      const exitSlideCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(0, BSMT_H + 0.18, -2.65),
+        new THREE.Vector3(0, 2.38, -2.18),
+        new THREE.Vector3(0, 1.38, -1.55),
+        new THREE.Vector3(0, 0.52, -0.88),
+        new THREE.Vector3(0, 0.18, -0.25),
+      ]);
+
+      const EX_U = 52;
+      const EX_V = 16;
+      const EX_R = 0.35;
+      const exPos: number[] = [];
+      const exIdx: number[] = [];
+      const exWorldUp = new THREE.Vector3(0, 1, 0);
+      const getExitBankFrame = (u: number) => {
+        const pt = exitSlideCurve.getPoint(u);
+        const tang = exitSlideCurve.getTangent(u).normalize();
+        const bankRight = new THREE.Vector3().crossVectors(exWorldUp, tang).normalize();
+        const bankUp = new THREE.Vector3().crossVectors(tang, bankRight).normalize();
+        return { pt, tang, bankRight, bankUp };
+      };
+
+      for (let i = 0; i <= EX_U; i++) {
+        const u = i / EX_U;
+        const { pt, bankRight, bankUp } = getExitBankFrame(u);
+        for (let j = 0; j <= EX_V; j++) {
+          const v = j / EX_V;
+          const theta = Math.PI + v * Math.PI;
+          const localX = Math.cos(theta) * EX_R;
+          const localUp = Math.sin(theta) * (EX_R * 0.85) + 0.25;
+          exPos.push(
+            pt.x + bankRight.x * localX + bankUp.x * localUp,
+            pt.y + bankRight.y * localX + bankUp.y * localUp,
+            pt.z + bankRight.z * localX + bankUp.z * localUp
+          );
+        }
+      }
+      for (let i = 0; i < EX_U; i++) {
+        for (let j = 0; j < EX_V; j++) {
+          const a = i * (EX_V + 1) + j;
+          const b = (i + 1) * (EX_V + 1) + j;
+          const c = (i + 1) * (EX_V + 1) + (j + 1);
+          const d = i * (EX_V + 1) + (j + 1);
+          exIdx.push(a, b, d, b, c, d);
+        }
+      }
+      const exitTroughGeo = new THREE.BufferGeometry();
+      exitTroughGeo.setAttribute('position', new THREE.Float32BufferAttribute(exPos, 3));
+      exitTroughGeo.setIndex(exIdx);
+      exitTroughGeo.computeVertexNormals();
+
+      const exitSlideMat = new THREE.MeshPhysicalMaterial({
+        color: 0x38bdf8,
+        roughness: 0.15,
+        metalness: 0.38,
+        clearcoat: 0.90,
+        clearcoatRoughness: 0.08,
+        envMapIntensity: 1.25,
+        side: THREE.DoubleSide,
+      });
+      const exitTroughMesh = new THREE.Mesh(exitTroughGeo, exitSlideMat);
+      exitTroughMesh.castShadow = true;
+      exitTroughMesh.receiveShadow = true;
+      slideExitGroup.add(exitTroughMesh);
+
+      const exitRailMat = new THREE.MeshStandardMaterial({
+        color: 0xbae6fd,
+        emissive: 0x38bdf8,
+        emissiveIntensity: 0.95,
+        roughness: 0.24,
+      });
+      [-1, 1].forEach((side) => {
+        const rPts: THREE.Vector3[] = [];
+        for (let i = 0; i <= 32; i++) {
+          const u = i / 32;
+          const { pt, bankRight, bankUp } = getExitBankFrame(u);
+          const rOff = side * (EX_R + 0.018);
+          rPts.push(
+            new THREE.Vector3(
+              pt.x + bankRight.x * rOff + bankUp.x * 0.27,
+              pt.y + bankRight.y * rOff + bankUp.y * 0.27,
+              pt.z + bankRight.z * rOff + bankUp.z * 0.27
+            )
+          );
+        }
+        slideExitGroup.add(
+          new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(rPts), 36, 0.015, 8, false), exitRailMat)
+        );
+      });
+
+      // Cushioned slate-blue landing mat at the base of the slide
+      const landingMat = new THREE.MeshPhysicalMaterial({
+        color: 0x334155,
+        roughness: 0.88,
+        sheen: 0.45,
+        sheenColor: new THREE.Color(0x94a3b8),
+      });
+      const padBase = new THREE.Mesh(new THREE.BoxGeometry(1.24, 0.08, 1.44), landingMat);
+      padBase.position.set(0, 0.04, 0.16);
+      padBase.castShadow = true;
+      padBase.receiveShadow = true;
+      slideExitGroup.add(padBase);
+
+      const slideExitLight = new THREE.PointLight(0x7dd3fc, 0.95, 6.5, 1.18);
+      slideExitLight.position.set(0, 1.25, -0.85);
+      slideExitGroup.add(slideExitLight);
+
+      baseGroup.add(slideExitGroup);
+
+      // 5. One-Way Upward Staircase in Opposite Corner (+X, +Z) -> Climbs up to 「洗手間」（阿璃的宿舍）
+      const stairGroup = new THREE.Group();
+      // Located along back-right corner (X ∈ [3.30, 7.25], Z = 3.85), climbing +X into ceiling hatch
+      const STAIR_STEPS = 14;
+      const STAIR_RUN = 3.50;
+      const STAIR_W = 1.32;
+      const STEP_D = STAIR_RUN / STAIR_STEPS;
+      const STEP_H = BSMT_H / STAIR_STEPS;
+      const STAIR_START_X = 3.30;
+      const STAIR_CENTER_Z = 3.85;
+
+      const stairRiserMat = new THREE.MeshStandardMaterial({
+        color: 0x262930,
+        roughness: 0.72,
+        metalness: 0.12,
+      });
+      const stairEdgeGlowMat = new THREE.MeshStandardMaterial({
+        color: 0xbae6fd,
+        emissive: 0x38bdf8,
+        emissiveIntensity: 0.65,
+        roughness: 0.3,
+      });
+      const stairRailMat = new THREE.MeshStandardMaterial({
+        color: 0x2b180d,
+        roughness: 0.42,
+        metalness: 0.38,
+      });
+
+      for (let s = 0; s < STAIR_STEPS; s++) {
+        const sx = STAIR_START_X + (s + 0.5) * STEP_D;
+        const stepTopY = (s + 1) * STEP_H;
+
+        // Solid stone support block / riser under each tread
+        const supportH = stepTopY - 0.035;
+        const supportMesh = new THREE.Mesh(
+          new THREE.BoxGeometry(STEP_D + 0.01, supportH, STAIR_W - 0.04),
+          s % 2 === 0 ? stoneSkirtMat : stairRiserMat
+        );
+        supportMesh.position.set(sx, supportH / 2, STAIR_CENTER_Z);
+        supportMesh.castShadow = true;
+        supportMesh.receiveShadow = true;
+        stairGroup.add(supportMesh);
+
+        // Deep walnut plank tread
+        const tread = new THREE.Mesh(
+          new THREE.BoxGeometry(STEP_D + 0.035, 0.045, STAIR_W),
+          walnutBeamMat
+        );
+        tread.position.set(sx - 0.012, stepTopY - 0.0225, STAIR_CENTER_Z);
+        tread.castShadow = true;
+        tread.receiveShadow = true;
+        stairGroup.add(tread);
+
+        // Subtle warm-lime step-nosing indicator strip guiding upward
+        const nosingStrip = new THREE.Mesh(
+          new THREE.BoxGeometry(0.014, 0.012, STAIR_W - 0.14),
+          stairEdgeGlowMat
+        );
+        nosingStrip.position.set(sx - STEP_D / 2 - 0.022, stepTopY - 0.012, STAIR_CENTER_Z);
+        stairGroup.add(nosingStrip);
+      }
+
+      // Inner-side (room-facing Z = 3.19) dark-iron & walnut handrail ascending along the stairs
+      const railSlopeLen = Math.hypot(STAIR_RUN, BSMT_H);
+      const railSlopeAng = Math.atan2(BSMT_H, STAIR_RUN);
+      const railZ = STAIR_CENTER_Z - STAIR_W / 2 - 0.03;
+
+      const handrailBar = new THREE.Mesh(
+        new THREE.BoxGeometry(railSlopeLen + 0.25, 0.055, 0.055),
+        walnutBeamMat
+      );
+      handrailBar.position.set(STAIR_START_X + STAIR_RUN / 2, BSMT_H / 2 + 0.88, railZ);
+      handrailBar.rotation.z = railSlopeAng;
+      handrailBar.castShadow = true;
+      stairGroup.add(handrailBar);
+
+      [0.05, 0.50, 0.95].forEach((tFrac) => {
+        const px = STAIR_START_X + tFrac * STAIR_RUN;
+        const basePy = tFrac * BSMT_H;
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.90, 0.05), stairRailMat);
+        post.position.set(px, basePy + 0.45, railZ);
+        post.castShadow = true;
+        stairGroup.add(post);
+      });
+
+      // Ceiling One-Way Exit Shaft Collar & Cool Bathroom Sky-Blue Rim at Top of Stairs
+      const stairHatchCollar = new THREE.Mesh(
+        new THREE.BoxGeometry(1.38, 0.22, STAIR_W + 0.18),
+        new THREE.MeshStandardMaterial({ color: 0x16191e, roughness: 0.48, metalness: 0.45 })
+      );
+      stairHatchCollar.position.set(STAIR_START_X + STAIR_RUN + 0.15, BSMT_H - 0.08, STAIR_CENTER_Z);
+      stairGroup.add(stairHatchCollar);
+
+      const stairHatchOpening = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.12, STAIR_W - 0.08),
+        new THREE.MeshBasicMaterial({ color: 0x163246, side: THREE.DoubleSide })
+      );
+      stairHatchOpening.rotation.x = Math.PI / 2;
+      stairHatchOpening.position.set(STAIR_START_X + STAIR_RUN + 0.15, BSMT_H - 0.02, STAIR_CENTER_Z);
+      stairGroup.add(stairHatchOpening);
+
+      // Engraved Directional Sign Board beside Stair Foot: 「B4 ➔ 洗手間 ↑」
+      const signCanvas = document.createElement('canvas');
+      signCanvas.width = 512;
+      signCanvas.height = 192;
+      const sCtx = signCanvas.getContext('2d');
+      if (sCtx) {
+        sCtx.fillStyle = '#20120a';
+        sCtx.fillRect(0, 0, 512, 192);
+        sCtx.strokeStyle = '#9b7b46';
+        sCtx.lineWidth = 8;
+        sCtx.strokeRect(10, 10, 492, 172);
+        sCtx.fillStyle = '#bae6fd';
+        sCtx.font = 'bold 38px sans-serif';
+        sCtx.textAlign = 'center';
+        sCtx.fillText('B4 單向樓梯 ↑', 256, 78);
+        sCtx.fillStyle = '#f5e7d0';
+        sCtx.font = 'bold 42px sans-serif';
+        sCtx.fillText('前往：洗手間', 256, 138);
+      }
+      const stairSignTex = new THREE.CanvasTexture(signCanvas);
+      stairSignTex.colorSpace = THREE.SRGBColorSpace;
+      extraRoomTexturesToDispose.push(stairSignTex);
+
+      const signPost = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.38, 0.06), stairRailMat);
+      signPost.position.set(STAIR_START_X - 0.14, 0.69, railZ);
+      stairGroup.add(signPost);
+
+      const signBoard = new THREE.Mesh(
+        new THREE.BoxGeometry(0.68, 0.28, 0.04),
+        new THREE.MeshStandardMaterial({ map: stairSignTex, roughness: 0.45 })
+      );
+      signBoard.position.set(STAIR_START_X - 0.14, 1.24, railZ - 0.035);
+      signBoard.rotation.y = -Math.PI * 0.25;
+      stairGroup.add(signBoard);
+
+      const stairLight = new THREE.PointLight(0xbae6fd, 1.15, 7.5, 1.12);
+      stairLight.position.set(5.3, 2.75, 3.2);
+      stairGroup.add(stairLight);
+
+      // Generous invisible clickable hitbox covering stairs + sign + ceiling hatch
+      const stairHitbox = new THREE.Mesh(
+        new THREE.BoxGeometry(4.4, 3.6, 1.55),
+        new THREE.MeshBasicMaterial({ visible: false })
+      );
+      stairHitbox.name = 'basement_upward_stair_hitbox';
+      stairHitbox.position.set(5.1, 1.8, STAIR_CENTER_Z);
+      basementStairHitboxRef.current = stairHitbox;
+      stairGroup.add(stairHitbox);
+
+      baseGroup.add(stairGroup);
+
+      // 6. Walnut & Stone Lounge Bench + Warm Floor Lantern on Left-Rear Side (-X, +Z)
+      const loungeBenchGroup = new THREE.Group();
+      loungeBenchGroup.position.set(-5.65, 0, 2.15);
+      loungeBenchGroup.rotation.y = Math.PI / 2;
+
+      const benchTop = new THREE.Mesh(
+        new THREE.BoxGeometry(1.95, 0.075, 0.60),
+        walnutBeamMat
+      );
+      benchTop.position.y = 0.44;
+      benchTop.castShadow = true;
+      benchTop.receiveShadow = true;
+      loungeBenchGroup.add(benchTop);
+
+      [-0.78, 0.78].forEach((lx) => {
+        const legBlock = new THREE.Mesh(
+          new THREE.BoxGeometry(0.16, 0.41, 0.52),
+          stoneSkirtMat
+        );
+        legBlock.position.set(lx, 0.205, 0);
+        legBlock.castShadow = true;
+        legBlock.receiveShadow = true;
+        loungeBenchGroup.add(legBlock);
+      });
+
+      const lanternBase = new THREE.Mesh(
+        new THREE.BoxGeometry(0.18, 0.04, 0.18),
+        walnutBeamMat
+      );
+      lanternBase.position.set(0.68, 0.495, 0);
+      loungeBenchGroup.add(lanternBase);
+
+      const lanternCore = new THREE.Mesh(
+        new THREE.BoxGeometry(0.12, 0.18, 0.12),
+        new THREE.MeshBasicMaterial({ color: 0xffdfaa })
+      );
+      lanternCore.position.set(0.68, 0.60, 0);
+      loungeBenchGroup.add(lanternCore);
+
+      baseGroup.add(loungeBenchGroup);
+
+      // 7. Balanced Lighting for 15×10m Hall: Dual Pendants + Warm Ceiling Up-Lights (to showcase Deep Walnut Ceiling & Gray Stone Floor)
+      const pendantCordMat = new THREE.MeshStandardMaterial({ color: 0x1e2024, roughness: 0.4, metalness: 0.6 });
+      const pendantShadeMat = new THREE.MeshStandardMaterial({ color: 0x2b170c, roughness: 0.42, metalness: 0.35 });
+      const pendantBulbMat = new THREE.MeshBasicMaterial({ color: 0xffe8c8 });
+      [-3.6, 3.6].forEach((px, idx) => {
+        const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.56, 12), pendantCordMat);
+        cord.position.set(px, BSMT_H - 0.28, 0);
+        baseGroup.add(cord);
+
+        const shade = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.30, 0.15, 24), pendantShadeMat);
+        shade.position.set(px, BSMT_H - 0.58, 0);
+        baseGroup.add(shade);
+
+        const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.09, 16, 12), pendantBulbMat);
+        bulb.position.set(px, BSMT_H - 0.64, 0);
+        baseGroup.add(bulb);
+
+        const mainLight = new THREE.PointLight(0xfff0dd, 2.65, 24, 1.0);
+        mainLight.position.set(px, BSMT_H - 0.70, 0);
+        if (idx === 0) {
+          mainLight.castShadow = true;
+          mainLight.shadow.mapSize.width = 1024;
+          mainLight.shadow.mapSize.height = 1024;
+          mainLight.shadow.bias = -0.0007;
+        }
+        baseGroup.add(mainLight);
+      });
+
+      // Warm upward bounce lights illuminating the 15×10m deep walnut wood ceiling & beams clearly
+      [
+        [-4.2, 2.55, -2.0],
+        [4.2, 2.55, -2.0],
+        [-4.2, 2.55, 2.0],
+        [4.2, 2.55, 2.0],
+      ].forEach(([lx, ly, lz]) => {
+        const upLight = new THREE.PointLight(0xffdcb8, 1.45, 13, 1.08);
+        upLight.position.set(lx, ly, lz);
+        baseGroup.add(upLight);
+      });
+
+      const benchLanternLight = new THREE.PointLight(0xffcfa0, 1.15, 9, 1.15);
+      benchLanternLight.position.set(-5.25, 0.85, 1.48);
+      baseGroup.add(benchLanternLight);
+
+      // 8. Staircase-Side Wall Corner Surveillance Desk, Giant Master Monitor & 1–5 Numbered Control Console
+      const survDeskGroup = new THREE.Group();
+      survDeskGroup.position.set(6.84, 0, 1.66);
+      survDeskGroup.rotation.y = -Math.PI / 2;
+
+      const deskWalnutMat = new THREE.MeshStandardMaterial({
+        map: walnutCeilingTex,
+        color: 0xf2dfd0,
+        roughness: 0.42,
+        metalness: 0.06,
+        envMapIntensity: 0.55,
+      });
+      const deskSteelMat = new THREE.MeshStandardMaterial({
+        color: 0x1c2026,
+        roughness: 0.36,
+        metalness: 0.74,
+        envMapIntensity: 0.90,
+      });
+      const deskBezelMat = new THREE.MeshStandardMaterial({
+        color: 0x14171c,
+        roughness: 0.32,
+        metalness: 0.58,
+      });
+      const deskPadMat = new THREE.MeshStandardMaterial({
+        color: 0x161b22,
+        roughness: 0.90,
+        metalness: 0.02,
+      });
+      const deskBrassMat = new THREE.MeshStandardMaterial({
+        color: 0xb98b48,
+        roughness: 0.28,
+        metalness: 0.82,
+      });
+
+      const DESK_W = 2.70;
+      const DESK_D = 0.96;
+      const DESK_H = 0.76;
+
+      // Walnut desktop + dark brushed steel perimeter trim
+      const survTop = new THREE.Mesh(new THREE.BoxGeometry(DESK_W, 0.056, DESK_D), deskWalnutMat);
+      survTop.position.set(0, DESK_H - 0.028, 0);
+      survTop.castShadow = true;
+      survTop.receiveShadow = true;
+      survDeskGroup.add(survTop);
+
+      const survTrimFront = new THREE.Mesh(new THREE.BoxGeometry(DESK_W + 0.016, 0.022, 0.016), deskSteelMat);
+      survTrimFront.position.set(0, DESK_H - 0.045, DESK_D / 2 + 0.004);
+      survDeskGroup.add(survTrimFront);
+
+      // Steel trestle legs + cross-stretcher beam
+      [-DESK_W / 2 + 0.14, DESK_W / 2 - 0.14].forEach((lx) => {
+        [-DESK_D / 2 + 0.12, DESK_D / 2 - 0.12].forEach((lz) => {
+          const leg = new THREE.Mesh(new THREE.BoxGeometry(0.06, DESK_H - 0.056, 0.06), deskSteelMat);
+          leg.position.set(lx, (DESK_H - 0.056) / 2, lz);
+          leg.castShadow = true;
+          leg.receiveShadow = true;
+          survDeskGroup.add(leg);
+        });
+        const sideBar = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.045, DESK_D - 0.22), deskSteelMat);
+        sideBar.position.set(lx, 0.16, 0);
+        survDeskGroup.add(sideBar);
+      });
+      const rearCrossBeam = new THREE.Mesh(new THREE.BoxGeometry(DESK_W - 0.28, 0.05, 0.05), deskSteelMat);
+      rearCrossBeam.position.set(0, 0.22, -DESK_D / 2 + 0.14);
+      survDeskGroup.add(rearCrossBeam);
+
+      // Under-desk DVR / Multi-Eye Signal Hub Tower on right leg
+      const dvrBox = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.44, 0.48), deskSteelMat);
+      dvrBox.position.set(DESK_W / 2 - 0.34, 0.22, -0.06);
+      dvrBox.castShadow = true;
+      survDeskGroup.add(dvrBox);
+      [0x22c55e, 0x38bdf8, 0xa855f7, 0xef4444, 0xd97706].forEach((ledHex, lIdx) => {
+        const led = new THREE.Mesh(
+          new THREE.BoxGeometry(0.014, 0.014, 0.008),
+          new THREE.MeshBasicMaterial({ color: ledHex })
+        );
+        led.position.set(DESK_W / 2 - 0.40 + lIdx * 0.03, 0.37, 0.184);
+        survDeskGroup.add(led);
+      });
+
+      // Stitched dark desk mat under the numbered control console
+      const deskMatMesh = new THREE.Mesh(new THREE.BoxGeometry(1.18, 0.006, 0.42), deskPadMat);
+      deskMatMesh.position.set(0, DESK_H + 0.003, 0.19);
+      deskMatMesh.receiveShadow = true;
+      survDeskGroup.add(deskMatMesh);
+
+      // Warm articulated brass & steel desk lamp on far left corner of the desk
+      const lampBase = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.095, 0.022, 20), deskSteelMat);
+      lampBase.position.set(-1.14, DESK_H + 0.011, 0.18);
+      survDeskGroup.add(lampBase);
+      const lampStem = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.42, 12), deskBrassMat);
+      lampStem.position.set(-1.14, DESK_H + 0.22, 0.16);
+      lampStem.rotation.x = 0.14;
+      survDeskGroup.add(lampStem);
+      const lampShade = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.10, 0.11, 18), deskSteelMat);
+      lampShade.position.set(-1.06, DESK_H + 0.41, 0.22);
+      lampShade.rotation.z = -0.35;
+      survDeskGroup.add(lampShade);
+      const lampGlow = new THREE.Mesh(
+        new THREE.SphereGeometry(0.036, 12, 10),
+        new THREE.MeshBasicMaterial({ color: 0xffe4b5 })
+      );
+      lampGlow.position.set(-1.05, DESK_H + 0.37, 0.22);
+      survDeskGroup.add(lampGlow);
+
+      const survDeskLight = new THREE.PointLight(0xffdfb8, 1.55, 6.8, 1.15);
+      survDeskLight.position.set(-0.25, DESK_H + 1.25, 0.65);
+      survDeskGroup.add(survDeskLight);
+
+      // Leather & Walnut Task Chair tucked slightly to the front-left so giant screen & console stay unobstructed
+      const chairGroup = new THREE.Group();
+      chairGroup.position.set(-0.78, 0, 0.96);
+      chairGroup.rotation.y = 0.48;
+      const chairLeatherMat = new THREE.MeshStandardMaterial({ color: 0x22262e, roughness: 0.62, metalness: 0.08 });
+      const chairHub = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.36, 12), deskSteelMat);
+      chairHub.position.y = 0.24;
+      chairGroup.add(chairHub);
+      for (let cLeg = 0; cLeg < 5; cLeg++) {
+        const a = (cLeg / 5) * Math.PI * 2;
+        const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.035, 0.30), deskSteelMat);
+        spoke.position.set(Math.sin(a) * 0.14, 0.04, Math.cos(a) * 0.14);
+        spoke.rotation.y = a;
+        chairGroup.add(spoke);
+      }
+      const chairSeat = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.07, 0.46), chairLeatherMat);
+      chairSeat.position.y = 0.45;
+      chairSeat.castShadow = true;
+      chairGroup.add(chairSeat);
+      const chairBack = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.48, 0.06), chairLeatherMat);
+      chairBack.position.set(0, 0.72, 0.21);
+      chairBack.rotation.x = 0.10;
+      chairBack.castShadow = true;
+      chairGroup.add(chairBack);
+      survDeskGroup.add(chairGroup);
+
+      // Heavy Twin-Post Steel Mounting Frame for the Single Giant Master Monitor
+      [-0.56, 0.56].forEach((px) => {
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.032, 1.06, 16), deskSteelMat);
+        post.position.set(px, DESK_H + 0.53, -0.32);
+        post.castShadow = true;
+        survDeskGroup.add(post);
+        const foot = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.024, 0.20), deskSteelMat);
+        foot.position.set(px, DESK_H + 0.012, -0.30);
+        survDeskGroup.add(foot);
+      });
+      const mainCrossBar = new THREE.Mesh(new THREE.BoxGeometry(1.40, 0.046, 0.044), deskSteelMat);
+      mainCrossBar.position.set(0, DESK_H + 0.90, -0.29);
+      survDeskGroup.add(mainCrossBar);
+
+      // Order the 5 registered eyeballs explicitly for channels 1..5 on the control console
+      const CHANNEL_ORDER: Array<'green' | 'blue' | 'purple' | 'red' | 'brown'> = [
+        'green',
+        'blue',
+        'purple',
+        'red',
+        'brown',
+      ];
+      const orderedEyeMetas = CHANNEL_ORDER.map((id) =>
+        registeredEyeballs.find((e) => e.id === id)
+      ).filter((e): e is (typeof registeredEyeballs)[number] => Boolean(e));
+
+      // Single High-Resolution WebGLRenderTarget (1024x640, 16:10) shared across switchable eyeball POV channels
+      const sharedEyeRT = new THREE.WebGLRenderTarget(1024, 640, {
+        minFilter: THREE.LinearFilter,
+        magFilter: THREE.LinearFilter,
+        format: THREE.RGBAFormat,
+      });
+      eyeRenderTargetsToDispose.push(sharedEyeRT);
+
+      orderedEyeMetas.forEach((eyeMeta) => {
+        const eyePivot = eyeMeta.eyeGroup.userData.eyePivot as THREE.Group | undefined;
+        const eyeRadius = (eyeMeta.eyeGroup.userData.eyeRadius as number | undefined) ?? 0.07;
+        if (!eyePivot) return;
+        const eyeCam = new THREE.PerspectiveCamera(68, 1024 / 640, 0.04, 42);
+        eyeMonitorFeeds.push({
+          id: eyeMeta.id,
+          roomId: eyeMeta.roomId,
+          eyeGroup: eyeMeta.eyeGroup,
+          eyePivot,
+          eyeRadius,
+          renderTarget: sharedEyeRT,
+          camera: eyeCam,
+        });
+      });
+
+      // Single Giant Master Monitor (1.92m x 1.20m live display) centered above the desk
+      const MON_SCREEN_W = 1.92;
+      const MON_SCREEN_H = 1.20;
+      const MON_CHASSIS_W = 2.02;
+      const MON_CHASSIS_H = 1.30;
+
+      const monGroup = new THREE.Group();
+      monGroup.position.set(0, DESK_H + 0.90, -0.22);
+
+      const chassis = new THREE.Mesh(
+        new THREE.BoxGeometry(MON_CHASSIS_W, MON_CHASSIS_H, 0.052),
+        deskBezelMat
+      );
+      chassis.castShadow = true;
+      chassis.receiveShadow = true;
+      monGroup.add(chassis);
+
+      // Brushed steel rear reinforcement & dual VESA arms
+      [-0.56, 0.56].forEach((vx) => {
+        const vesaBlock = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.18, 0.055), deskSteelMat);
+        vesaBlock.position.set(vx, 0, -0.052);
+        monGroup.add(vesaBlock);
+      });
+
+      const screenMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(MON_SCREEN_W, MON_SCREEN_H),
+        new THREE.MeshBasicMaterial({ map: sharedEyeRT.texture })
+      );
+      screenMesh.position.set(0, 0, 0.027);
+      monGroup.add(screenMesh);
+
+      const accentStripMat = new THREE.MeshBasicMaterial({
+        color: orderedEyeMetas[0]?.accentHex ?? 0x22c55e,
+      });
+      const accentStrip = new THREE.Mesh(
+        new THREE.BoxGeometry(0.44, 0.012, 0.008),
+        accentStripMat
+      );
+      accentStrip.position.set(0, -MON_CHASSIS_H / 2 + 0.016, 0.028);
+      monGroup.add(accentStrip);
+
+      // Dynamic Top Channel Nameplate above the giant monitor
+      const badgeCanvas = document.createElement('canvas');
+      badgeCanvas.width = 1024;
+      badgeCanvas.height = 96;
+      const bctx = badgeCanvas.getContext('2d');
+      const badgeTex = new THREE.CanvasTexture(badgeCanvas);
+      badgeTex.colorSpace = THREE.SRGBColorSpace;
+      extraRoomTexturesToDispose.push(badgeTex);
+
+      const badgePlate = new THREE.Mesh(
+        new THREE.BoxGeometry(1.04, 0.10, 0.018),
+        new THREE.MeshBasicMaterial({ map: badgeTex })
+      );
+      badgePlate.position.set(0, MON_CHASSIS_H / 2 + 0.058, 0.016);
+      monGroup.add(badgePlate);
+
+      const monHitbox = new THREE.Mesh(
+        new THREE.BoxGeometry(MON_CHASSIS_W + 0.04, MON_CHASSIS_H + 0.14, 0.10),
+        new THREE.MeshBasicMaterial({ visible: false })
+      );
+      monHitbox.name = 'basement_giant_master_monitor';
+      basementMainScreenHitboxRef.current = monHitbox;
+      monGroup.add(monHitbox);
+
+      const camSpot = new THREE.Object3D();
+      camSpot.position.set(0, 0.01, 1.38);
+      monGroup.add(camSpot);
+
+      survDeskGroup.add(monGroup);
+
+      // Sloped Ergonomic 3D Numbered Control Console (控制台) below the giant monitor
+      const consoleGroup = new THREE.Group();
+      consoleGroup.position.set(0, DESK_H + 0.006, 0.20);
+
+      // Wedge support cradle on desk surface
+      const consoleCradle = new THREE.Mesh(
+        new THREE.BoxGeometry(0.94, 0.044, 0.22),
+        deskSteelMat
+      );
+      consoleCradle.position.set(0, 0.022, -0.01);
+      consoleCradle.castShadow = true;
+      consoleGroup.add(consoleCradle);
+
+      // Tilted main faceplate assembly (~14° toward user)
+      const consoleDeck = new THREE.Group();
+      consoleDeck.position.set(0, 0.056, 0.005);
+      consoleDeck.rotation.x = 0.24;
+
+      const consoleHousing = new THREE.Mesh(
+        new THREE.BoxGeometry(0.96, 0.038, 0.27),
+        deskBezelMat
+      );
+      consoleHousing.castShadow = true;
+      consoleHousing.receiveShadow = true;
+      consoleDeck.add(consoleHousing);
+
+      // Walnut cheek trims on left and right sides of the console
+      [-0.494, 0.494].forEach((cx) => {
+        const cheek = new THREE.Mesh(
+          new THREE.BoxGeometry(0.028, 0.044, 0.278),
+          deskWalnutMat
+        );
+        cheek.position.set(cx, 0.001, 0);
+        consoleDeck.add(cheek);
+      });
+
+      // Top status readout strip showing active channel & eye location
+      const consoleStatusCanvas = document.createElement('canvas');
+      consoleStatusCanvas.width = 1024;
+      consoleStatusCanvas.height = 96;
+      const csCtx = consoleStatusCanvas.getContext('2d');
+      const consoleStatusTex = new THREE.CanvasTexture(consoleStatusCanvas);
+      consoleStatusTex.colorSpace = THREE.SRGBColorSpace;
+      extraRoomTexturesToDispose.push(consoleStatusTex);
+
+      const consoleReadout = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.84, 0.058),
+        new THREE.MeshBasicMaterial({ map: consoleStatusTex })
+      );
+      consoleReadout.rotation.x = -Math.PI / 2;
+      consoleReadout.position.set(0, 0.0205, -0.078);
+      consoleDeck.add(consoleReadout);
+
+      // Signal cable running from rear of console atop the desk toward monitor frame
+      const consoleCable = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.010, 0.010, 0.34, 10),
+        deskSteelMat
+      );
+      consoleCable.rotation.x = Math.PI / 2;
+      consoleCable.position.set(0, DESK_H + 0.010, -0.09);
+      survDeskGroup.add(consoleCable);
+
+      // 5 Tactile Illuminated Number Keys (1, 2, 3, 4, 5)
+      const consoleKeyRefs: Array<{
+        keyGroup: THREE.Group;
+        baseY: number;
+        ledMat: THREE.MeshStandardMaterial;
+        capMat: THREE.MeshStandardMaterial;
+        accentHex: number;
+      }> = [];
+      basementConsoleBtnRefs.current = [];
+
+      const SHORT_EYE_LABELS: Record<'green' | 'blue' | 'purple' | 'red' | 'brown', string> = {
+        green: '大廳・綠眼',
+        blue: '紀念館・藍眼',
+        purple: '宿舍・紫眼',
+        red: '陽台・紅眼',
+        brown: '密室・棕眼',
+      };
+
+      orderedEyeMetas.forEach((eyeMeta, chIdx) => {
+        const keyNum = chIdx + 1;
+        const kx = (chIdx - 2) * 0.168;
+        const kz = 0.042;
+
+        // Recessed brushed steel bezel collar
+        const collar = new THREE.Mesh(
+          new THREE.BoxGeometry(0.138, 0.010, 0.118),
+          deskSteelMat
+        );
+        collar.position.set(kx, 0.021, kz);
+        consoleDeck.add(collar);
+
+        // Moving tactile key cap group
+        const baseKeyY = 0.032;
+        const keyGroup = new THREE.Group();
+        keyGroup.position.set(kx, baseKeyY, kz);
+
+        // Key top numeral texture (number 1..5 + short location label)
+        const keyCanvas = document.createElement('canvas');
+        keyCanvas.width = 256;
+        keyCanvas.height = 256;
+        const kctx = keyCanvas.getContext('2d');
+        if (kctx) {
+          kctx.fillStyle = '#1b2028';
+          kctx.fillRect(0, 0, 256, 256);
+          kctx.strokeStyle = eyeMeta.accentCss;
+          kctx.lineWidth = 8;
+          kctx.strokeRect(10, 10, 236, 236);
+
+          kctx.fillStyle = eyeMeta.accentCss;
+          kctx.beginPath();
+          kctx.arc(42, 42, 12, 0, Math.PI * 2);
+          kctx.fill();
+
+          kctx.fillStyle = '#f8fafc';
+          kctx.font = 'bold 116px sans-serif';
+          kctx.textAlign = 'center';
+          kctx.textBaseline = 'middle';
+          kctx.fillText(String(keyNum), 128, 118);
+
+          kctx.fillStyle = '#cbd5e1';
+          kctx.font = 'bold 28px sans-serif';
+          kctx.fillText(SHORT_EYE_LABELS[eyeMeta.id], 128, 206);
+        }
+        const keyTex = new THREE.CanvasTexture(keyCanvas);
+        keyTex.colorSpace = THREE.SRGBColorSpace;
+        extraRoomTexturesToDispose.push(keyTex);
+
+        const capSideMat = new THREE.MeshStandardMaterial({
+          color: 0x202630,
+          roughness: 0.42,
+          metalness: 0.35,
+        });
+        const capTopMat = new THREE.MeshStandardMaterial({
+          map: keyTex,
+          color: 0xffffff,
+          roughness: 0.36,
+          metalness: 0.14,
+          emissive: new THREE.Color(eyeMeta.accentHex),
+          emissiveIntensity: 0.06,
+        });
+        const capMesh = new THREE.Mesh(
+          new THREE.BoxGeometry(0.118, 0.020, 0.098),
+          [capSideMat, capSideMat, capTopMat, capSideMat, capSideMat, capSideMat]
+        );
+        capMesh.castShadow = true;
+        keyGroup.add(capMesh);
+
+        // Glowing indicator bar along front-top lip of the key
+        const ledMat = new THREE.MeshStandardMaterial({
+          color: eyeMeta.accentHex,
+          emissive: new THREE.Color(eyeMeta.accentHex),
+          emissiveIntensity: 0.25,
+          roughness: 0.25,
+        });
+        const ledBar = new THREE.Mesh(
+          new THREE.BoxGeometry(0.088, 0.006, 0.010),
+          ledMat
+        );
+        ledBar.position.set(0, 0.011, -0.042);
+        keyGroup.add(ledBar);
+
+        // Generous clickable hitbox per numbered key
+        const btnHitbox = new THREE.Mesh(
+          new THREE.BoxGeometry(0.148, 0.082, 0.138),
+          new THREE.MeshBasicMaterial({ visible: false })
+        );
+        btnHitbox.name = `basement_console_btn_${keyNum}`;
+        btnHitbox.position.set(0, 0.020, 0);
+        keyGroup.add(btnHitbox);
+
+        consoleDeck.add(keyGroup);
+        consoleKeyRefs.push({
+          keyGroup,
+          baseY: baseKeyY,
+          ledMat,
+          capMat: capTopMat,
+          accentHex: eyeMeta.accentHex,
+        });
+        basementConsoleBtnRefs.current.push({ channelIdx: chIdx, hitbox: btnHitbox });
+      });
+
+      consoleGroup.add(consoleDeck);
+      survDeskGroup.add(consoleGroup);
+
+      // Update monitor nameplate, bottom LED bar, console status readout & key press states
+      const applyEyeChannelVisuals = (rawIdx: number) => {
+        if (orderedEyeMetas.length === 0) return;
+        const chIdx = ((rawIdx % orderedEyeMetas.length) + orderedEyeMetas.length) % orderedEyeMetas.length;
+        activeEyeChannelRef.current = chIdx;
+        const meta = orderedEyeMetas[chIdx];
+        const chNumStr = String(chIdx + 1).padStart(2, '0');
+
+        accentStripMat.color.setHex(meta.accentHex);
+
+        if (bctx) {
+          bctx.fillStyle = '#0d1117';
+          bctx.fillRect(0, 0, 1024, 96);
+          bctx.strokeStyle = meta.accentCss;
+          bctx.lineWidth = 5;
+          bctx.strokeRect(3, 3, 1018, 90);
+          bctx.fillStyle = meta.accentCss;
+          bctx.beginPath();
+          bctx.arc(46, 48, 14, 0, Math.PI * 2);
+          bctx.fill();
+          bctx.fillStyle = '#f8fafc';
+          bctx.font = 'bold 34px sans-serif';
+          bctx.textAlign = 'left';
+          bctx.textBaseline = 'middle';
+          bctx.fillText(`CH ${chNumStr}  //  ${meta.code}  ${meta.locationLabel}`, 80, 49);
+          badgeTex.needsUpdate = true;
+        }
+
+        if (csCtx) {
+          csCtx.fillStyle = '#0b0f16';
+          csCtx.fillRect(0, 0, 1024, 96);
+          csCtx.strokeStyle = meta.accentCss;
+          csCtx.lineWidth = 4;
+          csCtx.strokeRect(2, 2, 1020, 92);
+          csCtx.fillStyle = meta.accentCss;
+          csCtx.fillRect(18, 22, 12, 52);
+          csCtx.fillStyle = '#94a3b8';
+          csCtx.font = 'bold 26px sans-serif';
+          csCtx.textAlign = 'left';
+          csCtx.textBaseline = 'middle';
+          csCtx.fillText('CAM SELECT', 48, 49);
+          csCtx.fillStyle = '#f8fafc';
+          csCtx.font = 'bold 34px sans-serif';
+          csCtx.fillText(`[${chIdx + 1}]  ${meta.code} · ${meta.locationLabel}`, 250, 49);
+          consoleStatusTex.needsUpdate = true;
+        }
+
+        consoleKeyRefs.forEach((kRef, idx) => {
+          const isActive = idx === chIdx;
+          kRef.keyGroup.position.y = isActive ? kRef.baseY - 0.006 : kRef.baseY;
+          kRef.ledMat.emissiveIntensity = isActive ? 2.4 : 0.18;
+          kRef.capMat.emissiveIntensity = isActive ? 0.34 : 0.04;
+        });
+      };
+
+      applyEyeChannelVisuals(0);
+      switchBasementEyeChannelRef.current = applyEyeChannelVisuals;
+
+      // Broad hitbox around the surveillance desk for easy click-to-approach from across the basement
+      const survDeskHitbox = new THREE.Mesh(
+        new THREE.BoxGeometry(DESK_W + 0.08, 2.35, DESK_D + 0.35),
+        new THREE.MeshBasicMaterial({ visible: false })
+      );
+      survDeskHitbox.name = 'basement_surveillance_desk_hitbox';
+      survDeskHitbox.position.set(0, 1.175, 0.04);
+      basementDeskHitboxRef.current = survDeskHitbox;
+      survDeskGroup.add(survDeskHitbox);
+
+      baseGroup.add(survDeskGroup);
+      baseGroup.updateMatrixWorld(true);
+
+      // Compute exact world close-up focus position & angles for the single giant monitor
+      const _tmpMonPos = new THREE.Vector3();
+      const _tmpCamPos = new THREE.Vector3();
+      const _tmpDir = new THREE.Vector3();
+      monGroup.getWorldPosition(_tmpMonPos);
+      camSpot.getWorldPosition(_tmpCamPos);
+      _tmpDir.copy(_tmpMonPos).sub(_tmpCamPos).normalize();
+      basementScreenFocusSpotRef.current = {
+        focusPos: _tmpCamPos.clone(),
+        focusYaw: Math.atan2(-_tmpDir.x, -_tmpDir.z),
+        focusPitch: Math.asin(THREE.MathUtils.clamp(_tmpDir.y, -0.92, 0.92)),
+      };
+
+      scene.add(baseGroup);
+    };
+
+    buildBasementRoom();
+
     // --- 6. ANIMATION & RENDER LOOP ---
     let animationId: number;
     const clock = new THREE.Clock();
@@ -15696,54 +17514,440 @@ export const Room3DScene: React.FC = () => {
     const BATH_TUB_VIEW_POS = new THREE.Vector3(-0.78, 0.94, 2.36);
     const BATH_BALCONY_VIEW_POS = new THREE.Vector3(0.78, 1.30, 3.44);
     const BATH_CHAIR_VIEW_POS = new THREE.Vector3(-1.27, 0.93, 3.69);
+    const BASEMENT_CENTER_POS = new THREE.Vector3(BSMT_SLIDE_X + 0.35, 1.45, BSMT_SLIDE_Z + 0.65);
+    const BASEMENT_DESK_VIEW_POS = new THREE.Vector3(4.68, 1.36, 1.66);
     const PINK_DESK_VIEW_POS = new THREE.Vector3(0.76, 1.30, -2.18);
     const PINK_CAPSULE_VIEW_POS = new THREE.Vector3(-4.36, 1.78, 2.95);
     const PINK_BOARD_VIEW_POS = new THREE.Vector3(-1.72, 1.28, 1.96);
     const PINK_SHOWCASE_VIEW_POS = new THREE.Vector3(-0.44, 1.15, 0.72);
     const PINK_SECRET_VIEW_POS = new THREE.Vector3(-8.85, 1.32, 0.20);
 
+    // First-person straight slide-down curves (Pink Room lower circular capsule chute -> B4 front-left corner landing exit)
+    const pinkSlideRideCurve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(-4.36, 0.40, 0.72),
+      new THREE.Vector3(-4.36, 0.27, 1.24),
+      new THREE.Vector3(-4.36, -0.12, 1.90),
+      new THREE.Vector3(-4.36, -0.78, 2.58),
+      new THREE.Vector3(-4.36, -1.84, 3.18),
+    ]);
+    const basementSlideExitCurve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(BSMT_SLIDE_X, 2.85, BSMT_SLIDE_Z - 2.55),
+      new THREE.Vector3(BSMT_SLIDE_X, 2.05, BSMT_SLIDE_Z - 1.95),
+      new THREE.Vector3(BSMT_SLIDE_X, 1.32, BSMT_SLIDE_Z - 1.30),
+      new THREE.Vector3(BSMT_SLIDE_X, 0.88, BSMT_SLIDE_Z - 0.65),
+      new THREE.Vector3(BSMT_SLIDE_X + 0.15, 1.42, BSMT_SLIDE_Z + 0.38),
+    ]);
+
+    const applyBasementRoomImmediate = () => {
+      if (lowerPodAutoResetTimerRef.current !== null) {
+        window.clearTimeout(lowerPodAutoResetTimerRef.current);
+        lowerPodAutoResetTimerRef.current = null;
+      }
+      lowerPodIsOpenRef.current = false;
+      lowerPodClickCountRef.current = 0;
+      activeRoomRef.current = 'basement';
+      setActiveRoom('basement');
+      setIsPinkNavOpen(false);
+      setIsBathNavOpen(false);
+      setDakiSubtitle(null);
+      if (lobbyRoomGroupRef.current) lobbyRoomGroupRef.current.visible = false;
+      (['purple', 'green', 'gold', 'pink', 'cyan', 'cyan_b1', 'royalblue', 'brown', 'bathroom', 'basement'] as const).forEach((roomId) => {
+        const rg = extraRoomsRef.current[roomId].roomGroup;
+        if (rg) rg.visible = roomId === 'basement';
+      });
+      const atmo = ROOM_ATMOSPHERE.basement;
+      if (sceneRef.current) {
+        sceneRef.current.background = new THREE.Color(atmo.bgHex);
+        sceneRef.current.fog = new THREE.FogExp2(atmo.bgHex, 0.014);
+        sceneRef.current.environmentIntensity = atmo.envIntensity;
+      }
+      if (rendererRef.current) {
+        rendererRef.current.toneMappingExposure = 0.96;
+      }
+      if (ambientLightRef.current) {
+        ambientLightRef.current.color.setHex(atmo.ambientColor);
+        ambientLightRef.current.intensity = atmo.ambientIntensity;
+      }
+      if (hemiLightRef.current) {
+        hemiLightRef.current.color.setHex(atmo.hemiSky);
+        hemiLightRef.current.groundColor.setHex(atmo.hemiGround);
+        hemiLightRef.current.intensity = atmo.hemiIntensity;
+      }
+      viewLocationRef.current = 'center';
+      setViewLocation('center');
+    };
+
+    const applyBathroomRoomImmediate = () => {
+      activeRoomRef.current = 'bathroom';
+      setActiveRoom('bathroom');
+      setIsPinkNavOpen(false);
+      setIsBathNavOpen(false);
+      bathWindowOpenRef.current = true;
+      setDakiSubtitle(null);
+      if (lobbyRoomGroupRef.current) lobbyRoomGroupRef.current.visible = false;
+      (['purple', 'green', 'gold', 'pink', 'cyan', 'cyan_b1', 'royalblue', 'brown', 'bathroom', 'basement'] as const).forEach((roomId) => {
+        const rg = extraRoomsRef.current[roomId].roomGroup;
+        if (rg) rg.visible = roomId === 'bathroom';
+      });
+      const atmo = ROOM_ATMOSPHERE.bathroom;
+      if (sceneRef.current) {
+        sceneRef.current.background = new THREE.Color(atmo.bgHex);
+        sceneRef.current.fog = new THREE.FogExp2(atmo.bgHex, 0.016);
+        sceneRef.current.environmentIntensity = atmo.envIntensity;
+      }
+      if (rendererRef.current) {
+        rendererRef.current.toneMappingExposure = 0.90;
+      }
+      if (ambientLightRef.current) {
+        ambientLightRef.current.color.setHex(atmo.ambientColor);
+        ambientLightRef.current.intensity = atmo.ambientIntensity;
+      }
+      if (hemiLightRef.current) {
+        hemiLightRef.current.color.setHex(atmo.hemiSky);
+        hemiLightRef.current.groundColor.setHex(atmo.hemiGround);
+        hemiLightRef.current.intensity = atmo.hemiIntensity;
+      }
+      if (bathHatchPivotRef.current) {
+        bathHatchPivotRef.current.rotation.x = -Math.PI * 0.56;
+      }
+      viewLocationRef.current = 'balcony';
+      setViewLocation('balcony');
+    };
+
+    // Pre-allocated helpers for zero-GC offscreen eyeball POV feed rendering inside B4 Basement
+    const _eyeWorldPos = new THREE.Vector3();
+    const _eyeWorldQuat = new THREE.Quaternion();
+    const _eyeForwardDir = new THREE.Vector3();
+    const _eyeLookTarget = new THREE.Vector3();
+    const _eyeUpVec = new THREE.Vector3(0, 1, 0);
+    let cachedAtmoMap: Partial<Record<RoomId, { bg: THREE.Color; fog: THREE.FogExp2 }>> | null = null;
+
+    const getCachedRoomAtmo = (rid: RoomId) => {
+      if (!cachedAtmoMap) {
+        cachedAtmoMap = {};
+        (Object.keys(ROOM_ATMOSPHERE) as RoomId[]).forEach((k) => {
+          const a = ROOM_ATMOSPHERE[k];
+          cachedAtmoMap![k] = {
+            bg: new THREE.Color(a.bgHex),
+            fog: new THREE.FogExp2(a.bgHex, k === 'pink' ? 0.011 : k === 'basement' ? 0.014 : 0.016),
+          };
+        });
+      }
+      return cachedAtmoMap[rid]!;
+    };
+
+    const applyEyeRenderAtmosphere = (rid: RoomId) => {
+      const a = ROOM_ATMOSPHERE[rid];
+      const cached = getCachedRoomAtmo(rid);
+      scene.background = cached.bg;
+      scene.fog = cached.fog;
+      scene.environmentIntensity = a.envIntensity;
+      renderer.toneMappingExposure = rid === 'pink' ? 0.78 : rid === 'basement' ? 0.96 : 0.90;
+      ambientLight.color.setHex(a.ambientColor);
+      ambientLight.intensity = a.ambientIntensity;
+      hemiLight.color.setHex(a.hemiSky);
+      hemiLight.groundColor.setHex(a.hemiGround);
+      hemiLight.intensity = a.hemiIntensity;
+    };
+
+    const updateBasementEyeMonitorFeeds = (delta: number) => {
+      const basementGroup = extraRoomsRef.current.basement.roomGroup;
+      if (!basementGroup || eyeMonitorFeeds.length === 0) return;
+
+      const chIdx = ((activeEyeChannelRef.current % eyeMonitorFeeds.length) + eyeMonitorFeeds.length) % eyeMonitorFeeds.length;
+      const feed = eyeMonitorFeeds[chIdx];
+      const targetGroup =
+        feed.roomId === 'lobby'
+          ? lobbyRoomGroupRef.current
+          : extraRoomsRef.current[feed.roomId].roomGroup;
+      if (!targetGroup) return;
+
+      const prevTarget = renderer.getRenderTarget();
+      basementGroup.visible = false;
+      if (lobbyRoomGroupRef.current) lobbyRoomGroupRef.current.visible = false;
+      (['purple', 'green', 'gold', 'pink', 'cyan', 'cyan_b1', 'royalblue', 'brown', 'bathroom', 'basement'] as const).forEach((rid) => {
+        const rg = extraRoomsRef.current[rid].roomGroup;
+        if (rg) rg.visible = false;
+      });
+
+      targetGroup.visible = true;
+      targetGroup.updateMatrixWorld(true);
+      applyEyeRenderAtmosphere(feed.roomId);
+
+      if (feed.roomId === 'green' && greenScreenAnimatorRef.current) {
+        greenScreenAnimatorRef.current.update(delta);
+      }
+
+      feed.eyePivot.getWorldPosition(_eyeWorldPos);
+      feed.eyePivot.getWorldQuaternion(_eyeWorldQuat);
+      _eyeForwardDir.set(0, 0, 1).applyQuaternion(_eyeWorldQuat).normalize();
+      feed.camera.position.copy(_eyeWorldPos).addScaledVector(_eyeForwardDir, feed.eyeRadius * 0.65);
+      _eyeLookTarget.copy(feed.camera.position).addScaledVector(_eyeForwardDir, 4.0);
+      feed.camera.up.copy(_eyeUpVec);
+      feed.camera.lookAt(_eyeLookTarget);
+      feed.camera.updateMatrixWorld();
+
+      feed.eyeGroup.visible = false;
+      renderer.setRenderTarget(feed.renderTarget);
+      renderer.clear();
+      renderer.render(scene, feed.camera);
+      feed.eyeGroup.visible = true;
+      targetGroup.visible = false;
+
+      renderer.setRenderTarget(prevTarget);
+      if (lobbyRoomGroupRef.current) lobbyRoomGroupRef.current.visible = false;
+      basementGroup.visible = true;
+      applyEyeRenderAtmosphere('basement');
+    };
+
     const renderLoop = () => {
       const delta = Math.min(clock.getDelta(), 0.1);
 
-      // Smoothly move camera between tea table, 6-tier cabinet, doors, desk, capsule pod, corkboard, showcase cabinets, secret room, bathroom/tub/balcony/chair, and center of colored rooms
+      // Smoothly move camera between views OR play slide-down / stair-climb animations
       const isBath = activeRoomRef.current === 'bathroom';
-      const targetPos =
-        viewLocationRef.current === 'secret'
-          ? PINK_SECRET_VIEW_POS
-          : viewLocationRef.current === 'cabinet'
-            ? CABINET_VIEW_POS
-            : viewLocationRef.current === 'door'
-              ? (isBath ? BATH_DOOR_VIEW_POS : DOOR_VIEW_POS)
-              : viewLocationRef.current === 'door2'
-                ? CYAN_DOOR2_VIEW_POS
-                : viewLocationRef.current === 'center'
-                  ? (isBath ? BATH_CENTER_POS : ROOM_CENTER_POS)
-                  : viewLocationRef.current === 'tub'
-                    ? BATH_TUB_VIEW_POS
-                    : viewLocationRef.current === 'balcony'
-                      ? BATH_BALCONY_VIEW_POS
-                      : viewLocationRef.current === 'chair'
-                        ? BATH_CHAIR_VIEW_POS
-                        : viewLocationRef.current === 'desk'
-                          ? PINK_DESK_VIEW_POS
-                          : viewLocationRef.current === 'capsule'
-                            ? PINK_CAPSULE_VIEW_POS
-                            : viewLocationRef.current === 'board'
-                              ? PINK_BOARD_VIEW_POS
-                              : viewLocationRef.current === 'showcase'
-                                ? PINK_SHOWCASE_VIEW_POS
-                                : TABLE_VIEW_POS;
-      playerPosRef.current.x = THREE.MathUtils.damp(playerPosRef.current.x, targetPos.x, 4.6, delta);
-      playerPosRef.current.y = THREE.MathUtils.damp(playerPosRef.current.y, targetPos.y, 4.6, delta);
-      playerPosRef.current.z = THREE.MathUtils.damp(playerPosRef.current.z, targetPos.z, 4.6, delta);
+      const isBase = activeRoomRef.current === 'basement';
+      if (isSlidingRef.current) {
+        slideAnimElapsedRef.current += delta;
+        if (slidePhaseRef.current === 'pink_chute') {
+          const CHUTE_DUR = 2.75;
+          const u = Math.min(1, slideAnimElapsedRef.current / CHUTE_DUR);
+          if (u < 0.16) {
+            const k = u / 0.16;
+            const easeK = k * k * (3 - 2 * k);
+            const entryPt = pinkSlideRideCurve.getPoint(0);
+            camera.position.lerpVectors(slideStartPosRef.current, entryPt, easeK);
+            const targetInYaw = slideStartYawRef.current < 0 ? -Math.PI : Math.PI;
+            cameraYawRef.current = THREE.MathUtils.lerp(slideStartYawRef.current, targetInYaw, easeK);
+            cameraPitchRef.current = THREE.MathUtils.lerp(slideStartPitchRef.current, -0.22, easeK);
+            camera.rotation.z = 0;
+          } else {
+            const cU = (u - 0.16) / 0.84;
+            const easedCU = Math.min(1, cU * cU * (1.85 - 0.85 * cU));
+            const pos = pinkSlideRideCurve.getPoint(easedCU);
+            const tang = pinkSlideRideCurve.getTangent(easedCU).normalize();
+            const slopePitch = Math.atan2(tang.y, Math.hypot(tang.x, tang.z)) * 0.78;
+            const targetInYaw = slideStartYawRef.current < 0 ? -Math.PI : Math.PI;
+            cameraYawRef.current = targetInYaw;
+            cameraPitchRef.current = THREE.MathUtils.lerp(cameraPitchRef.current, slopePitch, Math.min(1, delta * 8.0));
+            const vibration = Math.sin(u * 62) * 0.0045;
+            camera.position.set(pos.x + vibration, pos.y + Math.abs(vibration) * 0.4, pos.z);
+            camera.rotation.z = 0;
+          }
+          camera.rotation.y = cameraYawRef.current;
+          camera.rotation.x = cameraPitchRef.current;
+          const targetFov = 65 + Math.sin(u * Math.PI) * 16;
+          if (Math.abs(camera.fov - targetFov) > 0.05) {
+            camera.fov = targetFov;
+            camera.updateProjectionMatrix();
+          }
+          camera.updateMatrixWorld();
 
-      cameraYawRef.current = THREE.MathUtils.damp(cameraYawRef.current, targetYawRef.current, 7.5, delta);
-      cameraPitchRef.current = THREE.MathUtils.damp(cameraPitchRef.current, targetPitchRef.current, 7.5, delta);
-      camera.position.copy(playerPosRef.current);
-      camera.rotation.z = 0;
-      camera.rotation.y = cameraYawRef.current;
-      camera.rotation.x = cameraPitchRef.current;
-      camera.updateMatrixWorld();
+          if (u >= 0.85 && !slideVeilTriggeredRef.current) {
+            slideVeilTriggeredRef.current = true;
+            if (portalVeilRef.current) {
+              portalVeilRef.current.style.opacity = '0.92';
+            }
+          }
+          if (u >= 1) {
+            applyBasementRoomImmediate();
+            slidePhaseRef.current = 'basement_exit';
+            slideAnimElapsedRef.current = 0;
+            if (portalVeilRef.current) {
+              portalVeilRef.current.style.opacity = '0';
+            }
+          }
+        } else {
+          const EXIT_DUR = 1.75;
+          const v = Math.min(1, slideAnimElapsedRef.current / EXIT_DUR);
+          const easeV = 1 - Math.pow(1 - v, 2.0);
+          const exitPos = basementSlideExitCurve.getPoint(easeV);
+          camera.position.copy(exitPos);
+          playerPosRef.current.copy(exitPos);
+          cameraYawRef.current = Math.PI;
+          targetYawRef.current = Math.PI;
+          cameraPitchRef.current = THREE.MathUtils.lerp(-0.40, -0.05, easeV);
+          targetPitchRef.current = cameraPitchRef.current;
+          camera.rotation.z = 0;
+          camera.rotation.y = cameraYawRef.current;
+          camera.rotation.x = cameraPitchRef.current;
+          const exitFov = THREE.MathUtils.lerp(74, 65, easeV);
+          if (Math.abs(camera.fov - exitFov) > 0.05) {
+            camera.fov = exitFov;
+            camera.updateProjectionMatrix();
+          }
+          camera.updateMatrixWorld();
+
+          if (v >= 1) {
+            isSlidingRef.current = false;
+            camera.fov = 65;
+            camera.updateProjectionMatrix();
+            camera.rotation.z = 0;
+            playerPosRef.current.copy(BASEMENT_CENTER_POS);
+            targetYawRef.current = -Math.PI * 0.54;
+            setIsSlideFxActive(false);
+          }
+        }
+      } else if (isClimbingRef.current) {
+        climbAnimElapsedRef.current += delta;
+        if (climbPhaseRef.current === 'basement_stairs') {
+          const STAIR_DUR = 1.90;
+          const u = Math.min(1, climbAnimElapsedRef.current / STAIR_DUR);
+          const stairFoot = new THREE.Vector3(2.85, 1.42, 3.85);
+          const stairTop = new THREE.Vector3(6.55, 3.55, 3.85);
+          if (u < 0.25) {
+            const k = u / 0.25;
+            const easeK = k * k * (3 - 2 * k);
+            camera.position.lerpVectors(climbStartPosRef.current, stairFoot, easeK);
+            const targetClimbYaw = -Math.PI / 2;
+            let yawDiff = targetClimbYaw - climbStartYawRef.current;
+            while (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
+            while (yawDiff < -Math.PI) yawDiff += Math.PI * 2;
+            cameraYawRef.current = climbStartYawRef.current + yawDiff * easeK;
+            cameraPitchRef.current = THREE.MathUtils.lerp(climbStartPitchRef.current, 0.28, easeK);
+          } else {
+            const cU = (u - 0.25) / 0.75;
+            const easeCU = cU * cU * (3 - 2 * cU);
+            camera.position.lerpVectors(stairFoot, stairTop, easeCU);
+            camera.position.y += Math.abs(Math.sin(cU * Math.PI * 10)) * 0.042;
+            cameraYawRef.current = -Math.PI / 2;
+            cameraPitchRef.current = THREE.MathUtils.lerp(0.28, 0.44, easeCU);
+          }
+          camera.rotation.z = 0;
+          camera.rotation.y = cameraYawRef.current;
+          camera.rotation.x = cameraPitchRef.current;
+          camera.updateMatrixWorld();
+
+          if (u >= 0.80 && !climbVeilTriggeredRef.current) {
+            climbVeilTriggeredRef.current = true;
+            if (portalVeilRef.current) {
+              portalVeilRef.current.style.opacity = '0.94';
+            }
+          }
+          if (u >= 1) {
+            applyBathroomRoomImmediate();
+            climbPhaseRef.current = 'bath_emerge';
+            climbAnimElapsedRef.current = 0;
+            if (portalVeilRef.current) {
+              portalVeilRef.current.style.opacity = '0';
+            }
+          }
+        } else {
+          const EMERGE_DUR = 1.25;
+          const v = Math.min(1, climbAnimElapsedRef.current / EMERGE_DUR);
+          const easeV = 1 - Math.pow(1 - v, 2.2);
+          const pitStart = new THREE.Vector3(1.05, -0.22, 3.66);
+          const pitMid = new THREE.Vector3(1.05, 1.18, 3.66);
+          const pitEnd = BATH_BALCONY_VIEW_POS;
+          if (easeV < 0.55) {
+            camera.position.lerpVectors(pitStart, pitMid, easeV / 0.55);
+          } else {
+            camera.position.lerpVectors(pitMid, pitEnd, (easeV - 0.55) / 0.45);
+          }
+          playerPosRef.current.copy(camera.position);
+          cameraYawRef.current = THREE.MathUtils.lerp(Math.PI - 0.35, Math.PI - 0.72, easeV);
+          targetYawRef.current = cameraYawRef.current;
+          cameraPitchRef.current = THREE.MathUtils.lerp(0.18, -0.18, easeV);
+          targetPitchRef.current = cameraPitchRef.current;
+          camera.rotation.z = 0;
+          camera.rotation.y = cameraYawRef.current;
+          camera.rotation.x = cameraPitchRef.current;
+          camera.updateMatrixWorld();
+
+          // Close the one-way balcony floor hatch shut behind you during the last 35%
+          if (bathHatchPivotRef.current) {
+            const closeProg = Math.max(0, (v - 0.65) / 0.35);
+            bathHatchPivotRef.current.rotation.x = THREE.MathUtils.lerp(-Math.PI * 0.56, 0, closeProg);
+          }
+
+          if (v >= 1) {
+            isClimbingRef.current = false;
+            if (bathHatchPivotRef.current) {
+              bathHatchPivotRef.current.rotation.x = 0;
+            }
+            targetYawRef.current = Math.PI - 0.72;
+            targetPitchRef.current = -0.18;
+          }
+        }
+      } else {
+        const focusedScreenSpot =
+          isBase &&
+          viewLocationRef.current === 'bsmt_desk' &&
+          basementScreenFocusedRef.current
+            ? basementScreenFocusSpotRef.current
+            : null;
+        const targetPos = focusedScreenSpot
+          ? focusedScreenSpot.focusPos
+          : viewLocationRef.current === 'bsmt_desk'
+            ? BASEMENT_DESK_VIEW_POS
+            : viewLocationRef.current === 'secret'
+              ? PINK_SECRET_VIEW_POS
+              : viewLocationRef.current === 'cabinet'
+                ? CABINET_VIEW_POS
+                : viewLocationRef.current === 'door'
+                  ? (isBath ? BATH_DOOR_VIEW_POS : isBase ? BASEMENT_CENTER_POS : DOOR_VIEW_POS)
+                  : viewLocationRef.current === 'door2'
+                    ? CYAN_DOOR2_VIEW_POS
+                    : viewLocationRef.current === 'center'
+                      ? (isBath ? BATH_CENTER_POS : isBase ? BASEMENT_CENTER_POS : ROOM_CENTER_POS)
+                      : viewLocationRef.current === 'tub'
+                        ? BATH_TUB_VIEW_POS
+                        : viewLocationRef.current === 'balcony'
+                          ? BATH_BALCONY_VIEW_POS
+                          : viewLocationRef.current === 'chair'
+                            ? BATH_CHAIR_VIEW_POS
+                            : viewLocationRef.current === 'desk'
+                              ? PINK_DESK_VIEW_POS
+                              : viewLocationRef.current === 'capsule'
+                                ? PINK_CAPSULE_VIEW_POS
+                                : viewLocationRef.current === 'board'
+                                  ? PINK_BOARD_VIEW_POS
+                                  : viewLocationRef.current === 'showcase'
+                                    ? PINK_SHOWCASE_VIEW_POS
+                                    : TABLE_VIEW_POS;
+        playerPosRef.current.x = THREE.MathUtils.damp(playerPosRef.current.x, targetPos.x, 4.6, delta);
+        playerPosRef.current.y = THREE.MathUtils.damp(playerPosRef.current.y, targetPos.y, 4.6, delta);
+        playerPosRef.current.z = THREE.MathUtils.damp(playerPosRef.current.z, targetPos.z, 4.6, delta);
+
+        cameraYawRef.current = THREE.MathUtils.damp(cameraYawRef.current, targetYawRef.current, 7.5, delta);
+        cameraPitchRef.current = THREE.MathUtils.damp(cameraPitchRef.current, targetPitchRef.current, 7.5, delta);
+        camera.position.copy(playerPosRef.current);
+        camera.rotation.z = 0;
+        camera.rotation.y = cameraYawRef.current;
+        camera.rotation.x = cameraPitchRef.current;
+        camera.updateMatrixWorld();
+      }
+
+      // Lower capsule door opening animation, interior glow & animated slide speed rings
+      if (lowerPodDoorPivotRef.current) {
+        const targetDoorAngle = lowerPodIsOpenRef.current ? -Math.PI * 0.78 : 0;
+        lowerPodDoorPivotRef.current.rotation.y = THREE.MathUtils.damp(
+          lowerPodDoorPivotRef.current.rotation.y,
+          targetDoorAngle,
+          8.5,
+          delta
+        );
+        if (lowerPodSlideGroupRef.current) {
+          lowerPodSlideGroupRef.current.visible =
+            viewLocationRef.current !== 'secret' &&
+            lowerPodDoorPivotRef.current.rotation.y < -0.2;
+        }
+        if (lowerPodLightRef.current) {
+          lowerPodLightRef.current.intensity = THREE.MathUtils.damp(
+            lowerPodLightRef.current.intensity,
+            lowerPodIsOpenRef.current ? 0.92 : 0.0,
+            6.5,
+            delta
+          );
+        }
+        if (lowerPodIsOpenRef.current && slideSpeedRingsRef.current.length > 0) {
+          const t = clock.elapsedTime;
+          slideSpeedRingsRef.current.forEach((ring, idx) => {
+            const mat = ring.material as THREE.MeshBasicMaterial;
+            const wave = 0.5 + 0.5 * Math.sin(t * 6.5 - idx * 1.15);
+            mat.opacity = 0.25 + wave * 0.68;
+          });
+        }
+      }
 
       // Smooth damped sliding animation for Bathroom 4m Floor-to-Ceiling Window & gentle balcony rocking chair sway
       if (bathWindowLeftLeafRef.current && bathWindowRightLeafRef.current) {
@@ -15784,7 +17988,7 @@ export const Room3DScene: React.FC = () => {
           }
         }
       };
-      (['purple', 'green', 'gold', 'pink', 'cyan', 'cyan_b1', 'royalblue', 'brown', 'bathroom'] as const).forEach((roomId) => {
+      (['purple', 'green', 'gold', 'pink', 'cyan', 'cyan_b1', 'royalblue', 'brown', 'bathroom', 'basement'] as const).forEach((roomId) => {
         animateDialState(extraRoomsRef.current[roomId]);
       });
       animateDialState(cyanFarDoorRef.current);
@@ -15993,7 +18197,7 @@ export const Room3DScene: React.FC = () => {
         doorRattleTimerRef.current = Math.max(0, doorRattleTimerRef.current - delta);
         const wobble = Math.sin(doorRattleTimerRef.current * 42) * 0.014 * (doorRattleTimerRef.current / 0.35);
         if (lobbyDoorLeafPivotRef.current) lobbyDoorLeafPivotRef.current.rotation.y = wobble;
-        (['purple', 'green', 'gold', 'pink', 'cyan', 'cyan_b1', 'royalblue', 'brown', 'bathroom'] as const).forEach((roomId) => {
+        (['purple', 'green', 'gold', 'pink', 'cyan', 'cyan_b1', 'royalblue', 'brown', 'bathroom', 'basement'] as const).forEach((roomId) => {
           const pivot = extraRoomsRef.current[roomId].doorLeafPivot;
           if (pivot) pivot.rotation.y = wobble;
         });
@@ -16001,7 +18205,7 @@ export const Room3DScene: React.FC = () => {
         if (cyanB1FarDoorRef.current.doorLeafPivot) cyanB1FarDoorRef.current.doorLeafPivot.rotation.y = wobble;
       } else {
         if (lobbyDoorLeafPivotRef.current) lobbyDoorLeafPivotRef.current.rotation.y = 0;
-        (['purple', 'green', 'gold', 'pink', 'cyan', 'cyan_b1', 'royalblue', 'brown', 'bathroom'] as const).forEach((roomId) => {
+        (['purple', 'green', 'gold', 'pink', 'cyan', 'cyan_b1', 'royalblue', 'brown', 'bathroom', 'basement'] as const).forEach((roomId) => {
           const pivot = extraRoomsRef.current[roomId].doorLeafPivot;
           if (pivot) pivot.rotation.y = 0;
         });
@@ -16011,6 +18215,11 @@ export const Room3DScene: React.FC = () => {
 
       if (activeRoomRef.current === 'green' && greenScreenAnimatorRef.current) {
         greenScreenAnimatorRef.current.update(delta);
+      }
+
+      // Render active eyeball's live POV feed onto the B4 Basement giant monitor
+      if (activeRoomRef.current === 'basement' && eyeMonitorFeeds.length > 0) {
+        updateBasementEyeMonitorFeeds(delta);
       }
 
       renderer.render(scene, camera);
@@ -16042,6 +18251,11 @@ export const Room3DScene: React.FC = () => {
           isCyanFloorDialogOpenRef.current = false;
           setIsCyanFloorDialogOpen(false);
         }
+      } else if (
+        activeRoomRef.current === 'basement' &&
+        (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4' || e.key === '5')
+      ) {
+        switchBasementEyeChannelRef.current?.(Number(e.key) - 1);
       }
     };
 
@@ -16056,8 +18270,12 @@ export const Room3DScene: React.FC = () => {
       if (portalFadeEndTimeoutRef.current !== null) window.clearTimeout(portalFadeEndTimeoutRef.current);
       if (dakiSubtitleTimerRef.current !== null) window.clearTimeout(dakiSubtitleTimerRef.current);
       if (bookcaseAutoResetTimerRef.current !== null) window.clearTimeout(bookcaseAutoResetTimerRef.current);
+      if (lowerPodAutoResetTimerRef.current !== null) window.clearTimeout(lowerPodAutoResetTimerRef.current);
 
       scene.traverse((obj) => {
+        if (obj instanceof Reflector) {
+          obj.dispose();
+        }
         if (obj instanceof THREE.Mesh) {
           if (obj.geometry) obj.geometry.dispose();
           if (Array.isArray(obj.material)) {
@@ -16075,10 +18293,14 @@ export const Room3DScene: React.FC = () => {
       enterPortalRoomRef.current = null;
       getCarvedPlaqueTextureRef.current = null;
       greenScreenAnimatorRef.current = null;
+      switchBasementEyeChannelRef.current = null;
+      basementConsoleBtnRefs.current = [];
+      basementScreenFocusSpotRef.current = null;
       doorEngravingTex.dispose();
       door2FEngravingTex.dispose();
       doorB1EngravingTex.dispose();
       extraRoomTexturesToDispose.forEach((tex) => tex.dispose());
+      eyeRenderTargetsToDispose.forEach((rt) => rt.dispose());
       wallCalendarTexture.dispose();
       scrollTexture.dispose();
       displayPosterTexture.dispose();
@@ -16240,7 +18462,7 @@ export const Room3DScene: React.FC = () => {
       RoomId,
       {
         name: string;
-        floor: '1F' | '2F' | 'B1';
+        floor: '1F' | '2F' | 'B1' | 'B4';
         bgHex: number;
         ambientColor: number;
         ambientIntensity: number;
@@ -16251,7 +18473,7 @@ export const Room3DScene: React.FC = () => {
       }
     > = {
       lobby: { name: '大廳', floor: '1F', bgHex: 0x0c0907, ambientColor: 0xffecd6, ambientIntensity: 0.76, hemiSky: 0xfff5ea, hemiGround: 0x6e5a47, hemiIntensity: 0.46, envIntensity: 0.26 },
-      purple: { name: '紫色房間', floor: '1F', bgHex: 0x10081c, ambientColor: 0xd8b4fe, ambientIntensity: 0.80, hemiSky: 0xede0ff, hemiGround: 0x563f73, hemiIntensity: 0.48, envIntensity: 0.28 },
+      purple: { name: '紫色房間', floor: '1F', bgHex: 0x161218, ambientColor: 0xfbf5ef, ambientIntensity: 0.88, hemiSky: 0xffffff, hemiGround: 0xb57a68, hemiIntensity: 0.56, envIntensity: 0.36 },
       green: { name: '綠色房間', floor: '1F', bgHex: 0x081406, ambientColor: 0xbef292, ambientIntensity: 0.80, hemiSky: 0xe2fcd4, hemiGround: 0x456936, hemiIntensity: 0.48, envIntensity: 0.28 },
       gold: { name: '金色房間', floor: '1F', bgHex: 0x171005, ambientColor: 0xfde68a, ambientIntensity: 0.80, hemiSky: 0xfff3c4, hemiGround: 0x785c28, hemiIntensity: 0.48, envIntensity: 0.28 },
       pink: { name: '粉色房間', floor: 'B1', bgHex: 0x181014, ambientColor: 0xfff0e6, ambientIntensity: 0.34, hemiSky: 0xfff4eb, hemiGround: 0x8a727c, hemiIntensity: 0.22, envIntensity: 0.20 },
@@ -16260,9 +18482,10 @@ export const Room3DScene: React.FC = () => {
       royalblue: { name: '寶藍色大廳', floor: '2F', bgHex: 0x0c0907, ambientColor: 0xffecd6, ambientIntensity: 0.78, hemiSky: 0xfff5ea, hemiGround: 0x52607a, hemiIntensity: 0.46, envIntensity: 0.27 },
       brown: { name: '棕色大廳', floor: '2F', bgHex: 0x0c0907, ambientColor: 0xffecd6, ambientIntensity: 0.78, hemiSky: 0xfff5ea, hemiGround: 0x6e5844, hemiIntensity: 0.46, envIntensity: 0.27 },
       bathroom: { name: '洗手間/浴室', floor: 'B1', bgHex: 0x0e151c, ambientColor: 0xeaf6ff, ambientIntensity: 0.78, hemiSky: 0xf4fbff, hemiGround: 0x6b7c8a, hemiIntensity: 0.46, envIntensity: 0.34 },
+      basement: { name: '地下密室', floor: 'B4', bgHex: 0x120d0a, ambientColor: 0xffe8d1, ambientIntensity: 0.82, hemiSky: 0xffeedd, hemiGround: 0x565a61, hemiIntensity: 0.56, envIntensity: 0.32 },
     };
 
-    // Switch behind-the-door room seamlessly across 1F, 2F & B1 rooms
+    // Switch behind-the-door room seamlessly across 1F, 2F, B1 & B4 rooms
     const handleEnterPortalRoom = (
       targetRoom: RoomId,
       spawnView: 'table' | 'door' | 'door2' | 'center' | 'tub' | 'balcony' | 'chair' = 'door'
@@ -16279,6 +18502,12 @@ export const Room3DScene: React.FC = () => {
 
       portalSwapTimeoutRef.current = window.setTimeout(() => {
         const isLobby = targetRoom === 'lobby';
+        isSlidingRef.current = false;
+        isClimbingRef.current = false;
+        setIsSlideFxActive(false);
+        if (bathHatchPivotRef.current) {
+          bathHatchPivotRef.current.rotation.x = 0;
+        }
         activeRoomRef.current = targetRoom;
         setActiveRoom(targetRoom);
         setIsPinkNavOpen(false);
@@ -16286,10 +18515,16 @@ export const Room3DScene: React.FC = () => {
         bathWindowOpenRef.current = false;
         if (targetRoom !== 'pink') {
           setDakiSubtitle(null);
+          if (lowerPodAutoResetTimerRef.current !== null) {
+            window.clearTimeout(lowerPodAutoResetTimerRef.current);
+            lowerPodAutoResetTimerRef.current = null;
+          }
+          lowerPodIsOpenRef.current = false;
+          lowerPodClickCountRef.current = 0;
         }
 
         if (lobbyRoomGroupRef.current) lobbyRoomGroupRef.current.visible = isLobby;
-        (['purple', 'green', 'gold', 'pink', 'cyan', 'cyan_b1', 'royalblue', 'brown', 'bathroom'] as const).forEach((roomId) => {
+        (['purple', 'green', 'gold', 'pink', 'cyan', 'cyan_b1', 'royalblue', 'brown', 'bathroom', 'basement'] as const).forEach((roomId) => {
           const rg = extraRoomsRef.current[roomId].roomGroup;
           if (rg) rg.visible = targetRoom === roomId;
         });
@@ -16349,6 +18584,15 @@ export const Room3DScene: React.FC = () => {
             targetPitchRef.current = 0;
             cameraPitchRef.current = 0;
           }
+        } else if (targetRoom === 'basement') {
+          isSlidingRef.current = false;
+          setIsSlideFxActive(false);
+          basementScreenFocusedRef.current = false;
+          playerPosRef.current.set(-6.0, 1.45, -1.35);
+          targetYawRef.current = -Math.PI * 0.54;
+          cameraYawRef.current = -Math.PI * 0.54;
+          targetPitchRef.current = 0;
+          cameraPitchRef.current = 0;
         } else if (spawnView === 'table') {
           playerPosRef.current.set(0, SEATED_HEIGHT, SEATED_Z);
           targetYawRef.current = CENTER_YAW;
@@ -16400,6 +18644,34 @@ export const Room3DScene: React.FC = () => {
 
       const currentRoom = activeRoomRef.current;
 
+      // Special: Inside Pink Room Secret Archive Room (密室區), ONLY secret room elements (interior lever & exit doorway/back of bookcase) can be tapped!
+      // This completely prevents raycasting through the doorway/walls into the main room's portal door, dial, corkboard, or capsule pod!
+      if (currentRoom === 'pink' && viewLocationRef.current === 'secret') {
+        if (
+          secretInsideLeverHitboxRef.current &&
+          raycasterRef.current.intersectObject(secretInsideLeverHitboxRef.current, false).length > 0
+        ) {
+          bookcaseLeverPulledRef.current = !bookcaseLeverPulledRef.current;
+          if (bookcaseLeverPulledRef.current) {
+            triggerBookcaseAutoReset();
+          }
+          if (typeof navigator !== 'undefined' && navigator.vibrate) {
+            try { navigator.vibrate(18); } catch {}
+          }
+          return true;
+        }
+
+        const backHitboxes = [bookcaseBackHitboxRef.current, secretPassageHitboxRef.current].filter(Boolean) as THREE.Mesh[];
+        if (backHitboxes.length > 0 && raycasterRef.current.intersectObjects(backHitboxes, false).length > 0) {
+          bookcaseLeverPulledRef.current = true;
+          handleSelectPinkView('door');
+          return true;
+        }
+
+        // Inside the secret room, clicks outside of the lever/doorway exit cannot trigger exterior room elements (e.g., entrance door, dial, etc.)
+        return false;
+      }
+
       // 1. Check active room's circular steampunk dial(s) FIRST (mounted on front of door)
       if (currentRoom === 'lobby') {
         if (portalHitboxRef.current && raycasterRef.current.intersectObject(portalHitboxRef.current, false).length > 0) {
@@ -16419,7 +18691,11 @@ export const Room3DScene: React.FC = () => {
         }
       } else {
         const dialHitbox = extraRoomsRef.current[currentRoom].dialHitbox;
-        if (dialHitbox && raycasterRef.current.intersectObject(dialHitbox, false).length > 0) {
+        if (
+          !(currentRoom === 'pink' && viewLocationRef.current === 'secret') &&
+          dialHitbox &&
+          raycasterRef.current.intersectObject(dialHitbox, false).length > 0
+        ) {
           handleCyclePortalColor();
           return true;
         }
@@ -16494,7 +18770,12 @@ export const Room3DScene: React.FC = () => {
         }
       } else if (currentRoom === 'pink') {
         const doorHitbox = extraRoomsRef.current.pink.doorHitbox;
-        if (doorHitbox && raycasterRef.current.intersectObject(doorHitbox, false).length > 0) {
+        if (
+          viewLocationRef.current !== 'secret' &&
+          viewLocationRef.current !== 'capsule' &&
+          doorHitbox &&
+          raycasterRef.current.intersectObject(doorHitbox, false).length > 0
+        ) {
           // Top (idx 0) is Silver -> returns to 地下一樓的門廊 facing Door 2
           // Right (idx 1) is Blue -> enters 洗手間/浴室 ('bathroom')
           if (extraRoomsRef.current.pink.colorIdx === 0) {
@@ -16508,7 +18789,12 @@ export const Room3DScene: React.FC = () => {
         }
       } else if (currentRoom === 'bathroom') {
         const doorHitbox = extraRoomsRef.current.bathroom.doorHitbox;
-        if (doorHitbox && raycasterRef.current.intersectObject(doorHitbox, false).length > 0) {
+        if (
+          viewLocationRef.current !== 'balcony' &&
+          viewLocationRef.current !== 'chair' &&
+          doorHitbox &&
+          raycasterRef.current.intersectObject(doorHitbox, false).length > 0
+        ) {
           // Top (idx 0) is Silver -> returns to 阿璃的宿舍 ('pink')
           if (extraRoomsRef.current.bathroom.colorIdx === 0) {
             handleEnterPortalRoom('pink', 'door');
@@ -16537,6 +18823,121 @@ export const Room3DScene: React.FC = () => {
             handleSelectBathView('balcony');
           } else {
             handleSelectBathView('center');
+          }
+          return true;
+        }
+      } else if (currentRoom === 'basement') {
+        if (
+          !isClimbingRef.current &&
+          !isSlidingRef.current &&
+          basementStairHitboxRef.current &&
+          raycasterRef.current.intersectObject(basementStairHitboxRef.current, false).length > 0
+        ) {
+          basementScreenFocusedRef.current = false;
+          normalizeCurrentYaw();
+          climbStartPosRef.current.copy(playerPosRef.current);
+          climbStartYawRef.current = cameraYawRef.current;
+          climbStartPitchRef.current = cameraPitchRef.current;
+          climbPhaseRef.current = 'basement_stairs';
+          climbAnimElapsedRef.current = 0;
+          climbVeilTriggeredRef.current = false;
+          isClimbingRef.current = true;
+          if (typeof navigator !== 'undefined' && navigator.vibrate) {
+            try { navigator.vibrate([14, 30, 18]); } catch {}
+          }
+          return true;
+        }
+
+        // Click any numbered button (1–5) on the control console to switch what the giant monitor displays
+        const consoleBtns = basementConsoleBtnRefs.current;
+        if (consoleBtns.length > 0) {
+          const btnHitboxes = consoleBtns.map((b) => b.hitbox);
+          const btnHits = raycasterRef.current.intersectObjects(btnHitboxes, false);
+          if (btnHits.length > 0) {
+            const hitMesh = btnHits[0].object as THREE.Mesh;
+            const matchedBtn = consoleBtns.find((b) => b.hitbox === hitMesh);
+            if (matchedBtn) {
+              switchBasementEyeChannelRef.current?.(matchedBtn.channelIdx);
+              if (viewLocationRef.current !== 'bsmt_desk') {
+                normalizeCurrentYaw();
+                viewLocationRef.current = 'bsmt_desk';
+                setViewLocation('bsmt_desk');
+                basementScreenFocusedRef.current = false;
+                let diff = -Math.PI / 2 - cameraYawRef.current;
+                while (diff > Math.PI) diff -= Math.PI * 2;
+                while (diff < -Math.PI) diff += Math.PI * 2;
+                targetYawRef.current = cameraYawRef.current + diff;
+                targetPitchRef.current = 0.03;
+              }
+              if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                try { navigator.vibrate(14); } catch {}
+              }
+              return true;
+            }
+          }
+        }
+
+        // When at the desk, click the giant monitor to toggle close-up view vs full desk + console overview
+        if (
+          viewLocationRef.current === 'bsmt_desk' &&
+          basementMainScreenHitboxRef.current &&
+          raycasterRef.current.intersectObject(basementMainScreenHitboxRef.current, false).length > 0
+        ) {
+          normalizeCurrentYaw();
+          if (basementScreenFocusedRef.current) {
+            basementScreenFocusedRef.current = false;
+            let diff = -Math.PI / 2 - cameraYawRef.current;
+            while (diff > Math.PI) diff -= Math.PI * 2;
+            while (diff < -Math.PI) diff += Math.PI * 2;
+            targetYawRef.current = cameraYawRef.current + diff;
+            targetPitchRef.current = 0.03;
+          } else if (basementScreenFocusSpotRef.current) {
+            basementScreenFocusedRef.current = true;
+            let diff = basementScreenFocusSpotRef.current.focusYaw - cameraYawRef.current;
+            while (diff > Math.PI) diff -= Math.PI * 2;
+            while (diff < -Math.PI) diff += Math.PI * 2;
+            targetYawRef.current = cameraYawRef.current + diff;
+            targetPitchRef.current = basementScreenFocusSpotRef.current.focusPitch;
+          }
+          if (typeof navigator !== 'undefined' && navigator.vibrate) {
+            try { navigator.vibrate(14); } catch {}
+          }
+          return true;
+        }
+
+        // Click surveillance desk to walk over and view the giant monitor & numbered control console
+        if (
+          basementDeskHitboxRef.current &&
+          raycasterRef.current.intersectObject(basementDeskHitboxRef.current, false).length > 0
+        ) {
+          normalizeCurrentYaw();
+          viewLocationRef.current = 'bsmt_desk';
+          setViewLocation('bsmt_desk');
+          basementScreenFocusedRef.current = false;
+          let diff = -Math.PI / 2 - cameraYawRef.current;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          targetYawRef.current = cameraYawRef.current + diff;
+          targetPitchRef.current = 0.03;
+          if (typeof navigator !== 'undefined' && navigator.vibrate) {
+            try { navigator.vibrate(14); } catch {}
+          }
+          return true;
+        }
+
+        // Clicking away from the desk while inspecting the console/monitor steps back to the room landing view
+        if (viewLocationRef.current === 'bsmt_desk') {
+          normalizeCurrentYaw();
+          viewLocationRef.current = 'center';
+          setViewLocation('center');
+          basementScreenFocusedRef.current = false;
+          let diff = -Math.PI * 0.54 - cameraYawRef.current;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          targetYawRef.current = cameraYawRef.current + diff;
+          targetPitchRef.current = 0;
+          if (typeof navigator !== 'undefined' && navigator.vibrate) {
+            try { navigator.vibrate(12); } catch {}
           }
           return true;
         }
@@ -16810,6 +19211,63 @@ export const Room3DScene: React.FC = () => {
         }
       }
 
+      // 4c-2. Lower Capsule Door & Slide tap (7 clicks to open door -> 1.25s auto-reset; tap slide/open hatch to ride down!)
+      if (currentRoom === 'pink' && !isSlidingRef.current) {
+        if (lowerPodIsOpenRef.current) {
+          const slideHitTargets = [lowerPodSlideHitboxRef.current, lowerPodHitboxRef.current].filter(Boolean) as THREE.Mesh[];
+          if (slideHitTargets.length > 0 && raycasterRef.current.intersectObjects(slideHitTargets, false).length > 0) {
+            if (lowerPodAutoResetTimerRef.current !== null) {
+              window.clearTimeout(lowerPodAutoResetTimerRef.current);
+              lowerPodAutoResetTimerRef.current = null;
+            }
+            // Launch first-person slide-down animation & visual FX
+            normalizeCurrentYaw();
+            slideStartPosRef.current.copy(playerPosRef.current);
+            slideStartYawRef.current = cameraYawRef.current;
+            slideStartPitchRef.current = cameraPitchRef.current;
+            slidePhaseRef.current = 'pink_chute';
+            slideAnimElapsedRef.current = 0;
+            slideVeilTriggeredRef.current = false;
+            isSlidingRef.current = true;
+            setIsSlideFxActive(true);
+            setIsPinkNavOpen(false);
+            setDakiSubtitle(null);
+            if (typeof navigator !== 'undefined' && navigator.vibrate) {
+              try { navigator.vibrate([16, 40, 24]); } catch {}
+            }
+            return true;
+          }
+        } else if (lowerPodHitboxRef.current) {
+          const lowerHits = raycasterRef.current.intersectObject(lowerPodHitboxRef.current, false);
+          if (lowerHits.length > 0) {
+            lowerPodClickCountRef.current += 1;
+            const count = lowerPodClickCountRef.current;
+            if (count >= 7) {
+              lowerPodIsOpenRef.current = true;
+              if (lowerPodAutoResetTimerRef.current !== null) {
+                window.clearTimeout(lowerPodAutoResetTimerRef.current);
+                lowerPodAutoResetTimerRef.current = null;
+              }
+              lowerPodAutoResetTimerRef.current = window.setTimeout(() => {
+                lowerPodIsOpenRef.current = false;
+                lowerPodClickCountRef.current = 0;
+                lowerPodAutoResetTimerRef.current = null;
+              }, 1250);
+              setDakiSubtitle("哢噠！膠囊艙下方的門打開了（1.25 秒後復位），快點擊溜滑梯滑下去！");
+            } else {
+              setDakiSubtitle("門被貼著「雜物」紙條鎖得很緊... (已點擊 " + count + "/7 次)");
+            }
+            if (dakiSubtitleTimerRef.current) clearTimeout(dakiSubtitleTimerRef.current);
+            dakiSubtitleTimerRef.current = window.setTimeout(() => setDakiSubtitle(null), 4500);
+
+            if (typeof navigator !== 'undefined' && navigator.vibrate) {
+              try { navigator.vibrate(18); } catch {}
+            }
+            return true;
+          }
+        }
+      }
+
       // 4d. Pink Room Upper Capsule Dakimakura tap (7-stage interactive tip/hop/flip sequence + bottom subtitle)
       if (currentRoom === 'pink' && dakiHitboxRef.current) {
         const dakiHits = raycasterRef.current.intersectObject(dakiHitboxRef.current, false);
@@ -17053,6 +19511,8 @@ export const Room3DScene: React.FC = () => {
   // Cyan Foyers (2F & B1) lock camera angle; other rooms allow 360° horizontal + vertical look
   const applyLookDelta = (deltaX: number, deltaY: number, sensitivity: number) => {
     if (
+      isSlidingRef.current ||
+      isClimbingRef.current ||
       isFoyerRoom(activeRoomRef.current) ||
       isCyanFloorDialogOpenRef.current ||
       isCalendarModalOpenRef.current ||
@@ -17073,9 +19533,11 @@ export const Room3DScene: React.FC = () => {
       targetPitchRef.current = THREE.MathUtils.clamp(targetPitchRef.current, MIN_PITCH, MAX_PITCH);
     } else {
       const isPink = activeRoomRef.current === 'pink';
+      const isPurple = activeRoomRef.current === 'purple';
       const isBath = activeRoomRef.current === 'bathroom';
-      const OTHER_MIN_PITCH = ((isPink ? -48 : isBath ? -42 : -14) * Math.PI) / 180;
-      const OTHER_MAX_PITCH = ((isPink ? 18 : isBath ? 22 : 14) * Math.PI) / 180;
+      const isBase = activeRoomRef.current === 'basement';
+      const OTHER_MIN_PITCH = ((isPink ? -48 : isPurple ? -32 : isBath ? -42 : isBase ? -52 : -14) * Math.PI) / 180;
+      const OTHER_MAX_PITCH = ((isPink ? 18 : isPurple ? 18 : isBath ? 22 : isBase ? 44 : 14) * Math.PI) / 180;
       targetPitchRef.current = THREE.MathUtils.clamp(
         targetPitchRef.current,
         OTHER_MIN_PITCH,
@@ -17206,6 +19668,55 @@ export const Room3DScene: React.FC = () => {
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none opacity-25">
         <div className="w-2.5 h-2.5 rounded-full border border-amber-300/70 bg-white/15 shadow-sm" />
       </div>
+
+      {/* First-Person Slide Speed Streaks & Wind Glow FX Overlay */}
+      {isSlideFxActive && (
+        <div className="pointer-events-none fixed inset-0 z-30 overflow-hidden">
+          <style>{`
+            @keyframes slideWindZoom {
+              0% { transform: scale(0.86) rotate(0deg); opacity: 0.45; }
+              50% { transform: scale(1.14) rotate(3deg); opacity: 0.85; }
+              100% { transform: scale(1.38) rotate(-2deg); opacity: 0.35; }
+            }
+          `}</style>
+          <div
+            className="absolute inset-0"
+            style={{
+              boxShadow: 'inset 0 0 110px rgba(56, 189, 248, 0.42), inset 0 0 36px rgba(186, 230, 253, 0.35)',
+              background:
+                'radial-gradient(circle at center, transparent 36%, rgba(14, 165, 233, 0.14) 76%, rgba(8, 47, 73, 0.46) 100%)',
+            }}
+          />
+          <svg
+            viewBox="0 0 800 800"
+            preserveAspectRatio="none"
+            className="absolute inset-0 w-full h-full opacity-75"
+            style={{ animation: 'slideWindZoom 0.48s linear infinite' }}
+          >
+            {Array.from({ length: 24 }).map((_, idx) => {
+              const ang = (idx / 24) * Math.PI * 2;
+              const r1 = 195 + (idx % 3) * 30;
+              const r2 = 430;
+              const x1 = 400 + Math.cos(ang) * r1;
+              const y1 = 400 + Math.sin(ang) * r1;
+              const x2 = 400 + Math.cos(ang) * r2;
+              const y2 = 400 + Math.sin(ang) * r2;
+              return (
+                <line
+                  key={idx}
+                  x1={x1}
+                  y1={y1}
+                  x2={x2}
+                  y2={y2}
+                  stroke={idx % 2 === 0 ? 'rgba(186, 230, 253, 0.72)' : 'rgba(56, 189, 248, 0.55)'}
+                  strokeWidth={idx % 3 === 0 ? '3.5' : '2'}
+                  strokeLinecap="round"
+                />
+              );
+            })}
+          </svg>
+        </div>
+      )}
 
       {/* Portal Door Room-Switch Cross-Dissolve Veil */}
       <div
@@ -17604,7 +20115,7 @@ export const Room3DScene: React.FC = () => {
         </div>
       )}
 
-      {activeRoom !== 'lobby' && activeRoom !== 'pink' && activeRoom !== 'bathroom' && (
+      {activeRoom !== 'lobby' && activeRoom !== 'pink' && activeRoom !== 'bathroom' && activeRoom !== 'basement' && (
         <div className="absolute bottom-5 right-5 z-30 flex flex-col gap-2.5">
           <button
             type="button"
