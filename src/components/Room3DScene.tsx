@@ -45,14 +45,47 @@ export const Room3DScene: React.FC = () => {
   const isLobbyStyleRoom = (id: RoomId) => id === 'lobby' || id === 'royalblue' || id === 'brown';
   const isFoyerRoom = (id: RoomId) => id === 'cyan' || id === 'cyan_b1';
 
+  interface SceneKeyData {
+    id: string;
+    num: number;
+    name: string;
+    colorName: string;
+    hexColor: number;
+    dotColor: string;
+    roomId: RoomId;
+    inSecret?: boolean;
+    slotId?: string;
+    group: THREE.Group;
+    hitbox: THREE.Mesh;
+  }
+
+  interface KeySpawnSlot {
+    slotId: string;
+    roomId: RoomId;
+    inSecret?: boolean;
+    isDialSlot?: boolean;
+    parent: THREE.Object3D;
+    position: [number, number, number];
+    rotation: [number, number, number];
+    scale?: number;
+  }
+
+  const KEY_CONFIGS = [
+    { id: 'key_copper', num: 1, name: '第一把鑰匙', colorName: '紅銅色', hexColor: 0xb85d3b, dotColor: '#b85d3b', metalness: 0.85, roughness: 0.28 },
+    { id: 'key_teal', num: 2, name: '第二把鑰匙', colorName: '藍綠色', hexColor: 0x0d9488, dotColor: '#0d9488', metalness: 0.80, roughness: 0.26 },
+    { id: 'key_gold', num: 3, name: '第三把鑰匙', colorName: '金色', hexColor: 0xf59e0b, dotColor: '#f59e0b', metalness: 0.90, roughness: 0.20 },
+    { id: 'key_black', num: 4, name: '第四把鑰匙', colorName: '黑色', hexColor: 0x18181b, dotColor: '#27272a', metalness: 0.85, roughness: 0.28 },
+    { id: 'key_rosegold', num: 5, name: '第五把鑰匙', colorName: '玫瑰金色', hexColor: 0xb76e79, dotColor: '#b76e79', metalness: 0.88, roughness: 0.24 },
+    { id: 'key_silver', num: 6, name: '第六把鑰匙', colorName: '鐵銀色', hexColor: 0x94a3b8, dotColor: '#94a3b8', metalness: 0.92, roughness: 0.18 },
+    { id: 'key_rust', num: 7, name: '第七把鑰匙', colorName: '鐵鏽色', hexColor: 0x8b3a22, dotColor: '#8b3a22', metalness: 0.75, roughness: 0.45 },
+  ];
+
   // Game, Camera Location, Active Portal Room & Light State
   const [isLampOn, setIsLampOn] = useState(true);
   const [isCalendarModalOpen, setIsCalendarModalOpen] = useState(false);
   const isCalendarModalOpenRef = useRef(false);
   const [isMonologueOpen, setIsMonologueOpen] = useState(false);
   const isMonologueOpenRef = useRef(false);
-  const [dakiSubtitle, setDakiSubtitle] = useState<string | null>(null);
-  const dakiSubtitleTimerRef = useRef<number | null>(null);
   const [viewLocation, setViewLocation] = useState<
     'table' | 'cabinet' | 'door' | 'door2' | 'center' | 'desk' | 'capsule' | 'board' | 'showcase' | 'tub' | 'balcony' | 'chair' | 'secret' | 'bsmt_desk'
   >('table');
@@ -104,7 +137,17 @@ export const Room3DScene: React.FC = () => {
   const capsuleMainLightFrontRef = useRef<THREE.PointLight | null>(null);
   const capsuleLightModeRef = useRef<number>(0); // 0: 白色, 1: 藍色, 2: 藍色燈條, 3: 關燈
 
-  // Lower Capsule 7-click door open & slide interactive refs
+  // 7 Keys Collection System Refs & State
+  const [heldKeysState, setHeldKeysState] = useState<string[]>([]);
+  const heldKeysRef = useRef<Set<string>>(new Set());
+  const sceneKeysRef = useRef<SceneKeyData[]>([]);
+  const keySpawnSlotsRef = useRef<KeySpawnSlot[]>([]);
+  const dialAttachedKeyRef = useRef<SceneKeyData | null>(null);
+  const dialKeyDroppedRef = useRef<boolean>(false);
+  const dialKeyFallElapsedRef = useRef<number>(0);
+  const randomizeKeyPlacementsRef = useRef<(() => void) | null>(null);
+
+  // Lower Capsule 7-keys door open & slide interactive refs
   const lowerPodClickCountRef = useRef<number>(0);
   const lowerPodIsOpenRef = useRef<boolean>(false);
   const lowerPodAutoResetTimerRef = useRef<number | null>(null);
@@ -569,6 +612,125 @@ export const Room3DScene: React.FC = () => {
       camera: THREE.PerspectiveCamera;
     }> = [];
     const textureLoader = new THREE.TextureLoader();
+
+    sceneKeysRef.current = [];
+    const keySpawnSlots: KeySpawnSlot[] = [];
+    keySpawnSlotsRef.current = keySpawnSlots;
+
+    // Helper to procedurally construct realistic 3D keys with collision hitbox
+    const createSceneKey = ({
+      id,
+      num,
+      name,
+      colorName,
+      hexColor,
+      dotColor,
+      roomId,
+      inSecret,
+      metalness = 0.85,
+      roughness = 0.25,
+    }: {
+      id: string;
+      num: number;
+      name: string;
+      colorName: string;
+      hexColor: number;
+      dotColor: string;
+      roomId: RoomId;
+      inSecret?: boolean;
+      metalness?: number;
+      roughness?: number;
+    }): SceneKeyData => {
+      const keyGroup = new THREE.Group();
+      keyGroup.name = `scene_key_${id}`;
+
+      const keyMat = new THREE.MeshStandardMaterial({
+        color: hexColor,
+        metalness,
+        roughness,
+        envMapIntensity: 1.25,
+      });
+
+      // 1. Key Bow (Head ring)
+      const bow = new THREE.Mesh(
+        new THREE.TorusGeometry(0.045, 0.009, 12, 28),
+        keyMat
+      );
+      bow.castShadow = true;
+      keyGroup.add(bow);
+
+      // 1b. Inner decorative clover ring
+      const innerRing = new THREE.Mesh(
+        new THREE.TorusGeometry(0.022, 0.005, 8, 20),
+        keyMat
+      );
+      keyGroup.add(innerRing);
+
+      // 2. Collar / Neck between bow and shaft
+      const collar = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.012, 0.014, 0.022, 14),
+        keyMat
+      );
+      collar.position.set(0, -0.052, 0);
+      collar.castShadow = true;
+      keyGroup.add(collar);
+
+      // 3. Main stem shaft
+      const shaft = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.0075, 0.0075, 0.14, 14),
+        keyMat
+      );
+      shaft.position.set(0, -0.13, 0);
+      shaft.castShadow = true;
+      keyGroup.add(shaft);
+
+      // 4. Key Bit / Teeth (classic antique notches)
+      const bitBase = new THREE.Mesh(
+        new THREE.BoxGeometry(0.008, 0.045, 0.028),
+        keyMat
+      );
+      bitBase.position.set(0, -0.175, 0.014);
+      bitBase.castShadow = true;
+      keyGroup.add(bitBase);
+
+      const bitNotch = new THREE.Mesh(
+        new THREE.BoxGeometry(0.0085, 0.014, 0.016),
+        keyMat
+      );
+      bitNotch.position.set(0, -0.165, 0.034);
+      bitNotch.castShadow = true;
+      keyGroup.add(bitNotch);
+
+      // 5. Invisible oversized clickable hitbox for touch and mouse
+      const hitbox = new THREE.Mesh(
+        new THREE.BoxGeometry(0.24, 0.24, 0.24),
+        new THREE.MeshBasicMaterial({
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+        })
+      );
+      hitbox.position.set(0, -0.09, 0.01);
+      hitbox.name = `hitbox_${id}`;
+      keyGroup.add(hitbox);
+
+      if (heldKeysRef.current.has(id)) {
+        keyGroup.visible = false;
+      }
+
+      return {
+        id,
+        num,
+        name,
+        colorName,
+        hexColor,
+        dotColor,
+        roomId,
+        inSecret,
+        group: keyGroup,
+        hitbox,
+      };
+    };
 
     // --- 3. ROOM ARCHITECTURE (大廳 - 10x7m) ---
     const roomGroup = new THREE.Group();
@@ -1525,6 +1687,15 @@ export const Room3DScene: React.FC = () => {
     portalSectorMatsRef.current = lobbyPortalDoor.sectorMats;
     portalRimGemMatsRef.current = lobbyPortalDoor.rimGemMats;
     lobbyPlaqueMatRef.current = lobbyPortalDoor.plaqueMat;
+
+    // 候選位置 1：一樓 大廳地上
+    keySpawnSlots.push({
+      slotId: 'lobby_floor',
+      roomId: 'lobby',
+      parent: roomGroup,
+      position: [-2.15, 0.012, -1.65],
+      rotation: [-Math.PI / 2, 0, 0.42],
+    });
 
     // Shared Realistic Multi-Layer Glass Eyeball Builder (仿真的玻璃眼珠：微血管開口鞏膜 + 放射狀虹膜 + 深邃黑瞳孔 + 凸面水晶角膜)
     const createEyeScleraTexture = () => {
@@ -4528,6 +4699,15 @@ export const Room3DScene: React.FC = () => {
     whiteBoxGroup.rotation.y = -0.025;
     cabinetGroup.add(whiteBoxGroup);
 
+    // 候選位置 2：一樓 大廳右側櫃子裡面
+    keySpawnSlots.push({
+      slotId: 'lobby_right_cabinet',
+      roomId: 'lobby',
+      parent: cabinetGroup,
+      position: [0.06, PLINTH_H + SHELF_THICK + 3 * cabTierPitch + 0.012, 0.05],
+      rotation: [-Math.PI / 2, 0, -0.25],
+    });
+
     // Warm fill light highlighting both 6-tier dark wood cabinets
     const cabinetAccentLight = new THREE.PointLight(0xffebd0, 1.35, 7.0, 1.15);
     cabinetAccentLight.position.set((CAB_X + CAB2_X) / 2, 2.28, CAB_Z + 1.15);
@@ -6719,6 +6899,46 @@ export const Room3DScene: React.FC = () => {
         deskNotebookGroup.rotation.y = 0.16;
         deskGroup.add(deskNotebookGroup);
 
+        // A5 Deckled-Edge Signed Damask Card ("UMIRI ★") resting on the Study Desk (桌上擺放的 A5 簽名花紋卡)
+        const deskUmiriA5Tex = textureLoader.load('/assets/desk_umiri_a5_card.webp');
+        deskUmiriA5Tex.colorSpace = THREE.SRGBColorSpace;
+        deskUmiriA5Tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        extraRoomTexturesToDispose.push(deskUmiriA5Tex);
+
+        const A5_CARD_W = 0.148;
+        const A5_CARD_H = 0.210;
+        const deskUmiriCardGroup = new THREE.Group();
+        const deskUmiriCardMesh = new THREE.Mesh(
+          new THREE.PlaneGeometry(A5_CARD_W, A5_CARD_H),
+          new THREE.MeshStandardMaterial({
+            map: deskUmiriA5Tex,
+            color: 0xffffff,
+            alphaTest: 0.15,
+            roughness: 0.88,
+            metalness: 0.0,
+            envMapIntensity: 0.34,
+          })
+        );
+        deskUmiriCardMesh.rotation.x = -Math.PI / 2;
+        deskUmiriCardMesh.position.y = 0.0020;
+        deskUmiriCardMesh.castShadow = true;
+        deskUmiriCardMesh.receiveShadow = true;
+        deskUmiriCardGroup.add(deskUmiriCardMesh);
+
+        deskUmiriCardGroup.position.set(-0.30, DESK_H, 0.105);
+        deskUmiriCardGroup.rotation.y = -0.14;
+        deskGroup.add(deskUmiriCardGroup);
+
+        // 候選位置 9：地下室 阿璃的宿舍區 書桌的桌上
+        keySpawnSlots.push({
+          slotId: 'pink_study_desk',
+          roomId: 'pink',
+          inSecret: false,
+          parent: deskGroup,
+          position: [0.28, DESK_H + 0.012, 0.04],
+          rotation: [-Math.PI / 2, 0, -0.35],
+        });
+
         // Jumbo Support Uchiwa Fan in Clear Zippered Cover hanging on Wall Right of Room Door (門右側牆面吊掛之「Happy Valentine's Day♡」應援推扇)
         const uchiwaFrontTex = textureLoader.load('/assets/uchiwa_fan_front.webp');
         uchiwaFrontTex.colorSpace = THREE.SRGBColorSpace;
@@ -8276,6 +8496,566 @@ export const Room3DScene: React.FC = () => {
             ledgeGroup.add(box30msGroup);
           }
 
+          // Minimalist Blue-Grey Baby Bunny Plushie Wearing a Plain T-Shirt & Sleeping Eye Mask on Far-Right of Topmost Shelf
+          if (tier === 3) {
+            const LEDGE_TOP_Y = WALL_SHELF_T / 2;
+
+            // 1. Procedural Muted Blue-Grey Plush Fur Texture & Micro-Fiber Bump Map
+            const createBunnyFurTextures = () => {
+              const colorCanvas = document.createElement('canvas');
+              colorCanvas.width = 512;
+              colorCanvas.height = 512;
+              const cctx = colorCanvas.getContext('2d');
+
+              const bumpCanvas = document.createElement('canvas');
+              bumpCanvas.width = 512;
+              bumpCanvas.height = 512;
+              const bctx = bumpCanvas.getContext('2d');
+
+              if (cctx && bctx) {
+                const bg = cctx.createLinearGradient(0, 0, 512, 512);
+                bg.addColorStop(0, '#8fa4b8');
+                bg.addColorStop(0.5, '#9cb0c4');
+                bg.addColorStop(1, '#7e93a8');
+                cctx.fillStyle = bg;
+                cctx.fillRect(0, 0, 512, 512);
+
+                bctx.fillStyle = '#7c7c7c';
+                bctx.fillRect(0, 0, 512, 512);
+
+                let fs = 917;
+                const frand = () => {
+                  fs = (fs * 16807) % 2147483647;
+                  return (fs - 1) / 2147483646;
+                };
+
+                // Soft muted slate-mist plush mottling patches
+                for (let p = 0; p < 140; p++) {
+                  const px = frand() * 512;
+                  const py = frand() * 512;
+                  const pr = 16 + frand() * 28;
+                  cctx.fillStyle =
+                    frand() > 0.5
+                      ? 'rgba(208, 220, 232, 0.14)'
+                      : 'rgba(98, 118, 138, 0.14)';
+                  cctx.beginPath();
+                  cctx.arc(px, py, pr, 0, Math.PI * 2);
+                  cctx.fill();
+                }
+
+                // Short overlapping fuzzy plush hair strokes & matching bump ridges
+                cctx.lineCap = 'round';
+                bctx.lineCap = 'round';
+                for (let i = 0; i < 6500; i++) {
+                  const sx = frand() * 512;
+                  const sy = frand() * 512;
+                  const ang = -Math.PI / 2 + (frand() - 0.5) * 1.15;
+                  const len = 5 + frand() * 9;
+                  const ex = sx + Math.cos(ang) * len;
+                  const ey = sy + Math.sin(ang) * len;
+                  const tone = frand();
+                  cctx.strokeStyle =
+                    tone > 0.62
+                      ? 'rgba(216, 227, 238, 0.36)'
+                      : tone > 0.28
+                        ? 'rgba(146, 168, 189, 0.34)'
+                        : 'rgba(92, 112, 132, 0.28)';
+                  cctx.lineWidth = 1.2 + frand() * 1.4;
+                  cctx.beginPath();
+                  cctx.moveTo(sx, sy);
+                  cctx.lineTo(ex, ey);
+                  cctx.stroke();
+
+                  const bVal = Math.floor(85 + tone * 145);
+                  bctx.strokeStyle = `rgba(${bVal},${bVal},${bVal},0.55)`;
+                  bctx.lineWidth = 1.1 + frand() * 1.3;
+                  bctx.beginPath();
+                  bctx.moveTo(sx, sy);
+                  bctx.lineTo(ex, ey);
+                  bctx.stroke();
+                }
+              }
+
+              const furTex = new THREE.CanvasTexture(colorCanvas);
+              furTex.colorSpace = THREE.SRGBColorSpace;
+              furTex.wrapS = THREE.RepeatWrapping;
+              furTex.wrapT = THREE.RepeatWrapping;
+              furTex.repeat.set(2, 2);
+              furTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+              extraRoomTexturesToDispose.push(furTex);
+
+              const furBump = new THREE.CanvasTexture(bumpCanvas);
+              furBump.wrapS = THREE.RepeatWrapping;
+              furBump.wrapT = THREE.RepeatWrapping;
+              furBump.repeat.set(2, 2);
+              furBump.anisotropy = renderer.capabilities.getMaxAnisotropy();
+              extraRoomTexturesToDispose.push(furBump);
+
+              return { furTex, furBump };
+            };
+            const { furTex: bunnyFurTex, furBump: bunnyFurBump } = createBunnyFurTextures();
+
+            // 2. Procedural Minimalist Plain Off-White Cotton T-Shirt Texture
+            const createBunnyTeeTex = () => {
+              const tc = document.createElement('canvas');
+              tc.width = 512;
+              tc.height = 512;
+              const tctx = tc.getContext('2d');
+              if (tctx) {
+                tctx.fillStyle = '#f3f2ee';
+                tctx.fillRect(0, 0, 512, 512);
+
+                // Subtle fine knitted cotton rib stripes
+                for (let x = 0; x < 512; x += 4) {
+                  tctx.fillStyle = x % 8 === 0 ? 'rgba(210, 216, 224, 0.22)' : 'rgba(255, 255, 255, 0.30)';
+                  tctx.fillRect(x, 0, 2, 512);
+                }
+
+                // Clean tonal hem & neckline stitch band
+                tctx.fillStyle = '#e7e8eb';
+                tctx.fillRect(0, 0, 512, 26);
+                tctx.fillRect(0, 484, 512, 28);
+              }
+              const tex = new THREE.CanvasTexture(tc);
+              tex.colorSpace = THREE.SRGBColorSpace;
+              tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+              extraRoomTexturesToDispose.push(tex);
+              return tex;
+            };
+            const bunnyTeeTex = createBunnyTeeTex();
+
+            // Helper to apply subtle fluffy plush surface displacement to sphere geometries
+            const makeFluffySphereGeo = (
+              radius: number,
+              wSeg: number,
+              hSeg: number,
+              amp: number,
+              freq: number,
+              phase: number
+            ) => {
+              const g = new THREE.SphereGeometry(radius, wSeg, hSeg);
+              const pos = g.attributes.position as THREE.BufferAttribute;
+              for (let i = 0; i < pos.count; i++) {
+                const vx = pos.getX(i);
+                const vy = pos.getY(i);
+                const vz = pos.getZ(i);
+                const len = Math.hypot(vx, vy, vz) || 1;
+                const nx = vx / len;
+                const ny = vy / len;
+                const nz = vz / len;
+                const wave =
+                  Math.sin(nx * freq + phase) * Math.cos(ny * (freq * 1.13) - phase) +
+                  0.6 * Math.sin((nz + nx) * (freq * 1.47) + phase * 1.7);
+                const d = amp * wave;
+                pos.setXYZ(i, vx + nx * d, vy + ny * d, vz + nz * d);
+              }
+              pos.needsUpdate = true;
+              g.computeVertexNormals();
+              return g;
+            };
+
+            const bunnyFurMat = new THREE.MeshPhysicalMaterial({
+              map: bunnyFurTex,
+              bumpMap: bunnyFurBump,
+              bumpScale: 0.0022,
+              color: 0xffffff,
+              roughness: 0.94,
+              metalness: 0.0,
+              sheen: 0.95,
+              sheenRoughness: 0.68,
+              sheenColor: new THREE.Color(0xdbe5ef),
+              envMapIntensity: 0.30,
+            });
+            const bunnyTailFurMat = new THREE.MeshPhysicalMaterial({
+              map: bunnyFurTex,
+              bumpMap: bunnyFurBump,
+              bumpScale: 0.0024,
+              color: 0xd2dbe4,
+              roughness: 0.96,
+              metalness: 0.0,
+              sheen: 0.95,
+              sheenRoughness: 0.66,
+              sheenColor: new THREE.Color(0xf1f5f9),
+              envMapIntensity: 0.28,
+            });
+            const bunnyInnerEarMat = new THREE.MeshPhysicalMaterial({
+              color: 0xd8dfe6,
+              roughness: 0.90,
+              metalness: 0.0,
+              sheen: 0.75,
+              sheenRoughness: 0.74,
+              sheenColor: new THREE.Color(0xf1f5f9),
+              envMapIntensity: 0.24,
+            });
+            const bunnyMuzzleMat = new THREE.MeshPhysicalMaterial({
+              color: 0xeef2f6,
+              bumpMap: bunnyFurBump,
+              bumpScale: 0.0012,
+              roughness: 0.92,
+              metalness: 0.0,
+              sheen: 0.85,
+              sheenRoughness: 0.70,
+              sheenColor: new THREE.Color(0xffffff),
+              envMapIntensity: 0.26,
+            });
+            const bunnyTeeMat = new THREE.MeshPhysicalMaterial({
+              map: bunnyTeeTex,
+              color: 0xffffff,
+              roughness: 0.86,
+              metalness: 0.0,
+              sheen: 0.48,
+              sheenRoughness: 0.78,
+              sheenColor: new THREE.Color(0xf8fafc),
+              envMapIntensity: 0.26,
+            });
+            const bunnyTeeTrimMat = new THREE.MeshPhysicalMaterial({
+              color: 0xe6e8ec,
+              roughness: 0.85,
+              metalness: 0.0,
+              sheen: 0.45,
+              sheenRoughness: 0.76,
+              envMapIntensity: 0.26,
+            });
+            const bunnyNoseMat = new THREE.MeshPhysicalMaterial({
+              color: 0x64748b,
+              roughness: 0.78,
+              metalness: 0.0,
+              sheen: 0.5,
+            });
+            const bunnyMaskMat = new THREE.MeshPhysicalMaterial({
+              color: 0x2c3542,
+              roughness: 0.88,
+              metalness: 0.0,
+              sheen: 0.72,
+              sheenRoughness: 0.70,
+              sheenColor: new THREE.Color(0x64748b),
+              envMapIntensity: 0.28,
+            });
+            const bunnyMaskStrapMat = new THREE.MeshStandardMaterial({
+              color: 0x1e2530,
+              roughness: 0.85,
+              metalness: 0.0,
+            });
+
+            const bunnyPlushGroup = new THREE.Group();
+
+            // A. Seated Chubby Plush Lower Body (resting flush at Y = 0)
+            const bunnyHipMesh = new THREE.Mesh(
+              makeFluffySphereGeo(0.056, 24, 18, 0.0016, 12.0, 0.5),
+              bunnyFurMat
+            );
+            bunnyHipMesh.scale.set(1.06, 0.86, 0.98);
+            bunnyHipMesh.position.set(0, 0.044, 0.0);
+            bunnyHipMesh.castShadow = true;
+            bunnyHipMesh.receiveShadow = true;
+            bunnyPlushGroup.add(bunnyHipMesh);
+
+            // B. Minimalist Plain Off-White Cotton T-Shirt Torso + Tonal Collar + Short Sleeves
+            const bunnyTeeBody = new THREE.Mesh(
+              new THREE.CylinderGeometry(0.0475, 0.0585, 0.080, 28),
+              bunnyTeeMat
+            );
+            bunnyTeeBody.position.set(0, 0.072, 0.002);
+            bunnyTeeBody.rotation.y = Math.PI;
+            bunnyTeeBody.castShadow = true;
+            bunnyTeeBody.receiveShadow = true;
+            bunnyPlushGroup.add(bunnyTeeBody);
+
+            const bunnyTeeCollar = new THREE.Mesh(
+              new THREE.TorusGeometry(0.036, 0.0056, 10, 24),
+              bunnyTeeTrimMat
+            );
+            bunnyTeeCollar.rotation.x = Math.PI / 2;
+            bunnyTeeCollar.position.set(0, 0.111, 0.004);
+            bunnyTeeCollar.castShadow = true;
+            bunnyPlushGroup.add(bunnyTeeCollar);
+
+            // Left & Right Short T-Shirt Sleeves + Blue-Grey Plush Forearms/Paws
+            [-1, 1].forEach((side) => {
+              const armPivot = new THREE.Group();
+              armPivot.position.set(side * 0.048, 0.094, 0.008);
+              armPivot.rotation.set(-0.24, side * 0.12, side * 0.68);
+
+              const sleeveMesh = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.0175, 0.0215, 0.030, 16),
+                bunnyTeeMat
+              );
+              sleeveMesh.position.y = -0.012;
+              sleeveMesh.castShadow = true;
+              armPivot.add(sleeveMesh);
+
+              const cuffRing = new THREE.Mesh(
+                new THREE.TorusGeometry(0.0205, 0.0028, 8, 18),
+                bunnyTeeTrimMat
+              );
+              cuffRing.rotation.x = Math.PI / 2;
+              cuffRing.position.y = -0.027;
+              armPivot.add(cuffRing);
+
+              const pawMesh = new THREE.Mesh(
+                makeFluffySphereGeo(0.0175, 16, 12, 0.0012, 14.0, side * 1.4),
+                bunnyFurMat
+              );
+              pawMesh.scale.set(0.92, 1.35, 0.94);
+              pawMesh.position.y = -0.042;
+              pawMesh.castShadow = true;
+              armPivot.add(pawMesh);
+
+              bunnyPlushGroup.add(armPivot);
+            });
+
+            // C. Seated Baby Hind Legs & Minimalist Rounded Bunny Feet (flush on Y = 0)
+            [-1, 1].forEach((side) => {
+              const footGrp = new THREE.Group();
+              footGrp.position.set(side * 0.037, 0.021, 0.046);
+              footGrp.rotation.y = side * 0.24;
+
+              const footBody = new THREE.Mesh(
+                makeFluffySphereGeo(0.025, 18, 14, 0.0013, 13.0, side * 2.1),
+                bunnyFurMat
+              );
+              footBody.scale.set(0.92, 0.84, 1.32);
+              footBody.castShadow = true;
+              footBody.receiveShadow = true;
+              footGrp.add(footBody);
+
+              // Subtle neutral mist-grey foot pad
+              const mainPad = new THREE.Mesh(
+                new THREE.SphereGeometry(0.0110, 12, 10),
+                bunnyInnerEarMat
+              );
+              mainPad.scale.set(1.0, 0.92, 0.34);
+              mainPad.position.set(0, -0.001, 0.030);
+              footGrp.add(mainPad);
+
+              bunnyPlushGroup.add(footGrp);
+            });
+
+            // D. Soft Mist-Grey Plush Bunny Tail at the Back
+            const bunnyTail = new THREE.Mesh(
+              makeFluffySphereGeo(0.020, 16, 12, 0.0020, 16.0, 3.2),
+              bunnyTailFurMat
+            );
+            bunnyTail.position.set(0, 0.026, -0.056);
+            bunnyTail.castShadow = true;
+            bunnyPlushGroup.add(bunnyTail);
+
+            // E. Minimalist Blue-Grey Baby Bunny Head + Sleeping Eye Mask
+            const headGrp = new THREE.Group();
+            headGrp.position.set(0, 0.162, 0.006);
+            headGrp.rotation.x = 0.04;
+
+            const headMain = new THREE.Mesh(
+              makeFluffySphereGeo(0.058, 28, 22, 0.0018, 13.0, 1.1),
+              bunnyFurMat
+            );
+            headMain.scale.set(1.10, 0.95, 0.98);
+            headMain.castShadow = true;
+            headMain.receiveShadow = true;
+            headGrp.add(headMain);
+
+            // Subtle rounded plush cheeks
+            [-1, 1].forEach((side) => {
+              const cheekPuff = new THREE.Mesh(
+                makeFluffySphereGeo(0.023, 16, 12, 0.0012, 14.0, side * 0.9),
+                bunnyFurMat
+              );
+              cheekPuff.scale.set(1.04, 0.86, 0.84);
+              cheekPuff.position.set(side * 0.035, -0.013, 0.033);
+              cheekPuff.castShadow = true;
+              headGrp.add(cheekPuff);
+            });
+
+            // Clean mist-ivory fluffy muzzle cushion
+            const muzzleMesh = new THREE.Mesh(
+              makeFluffySphereGeo(0.0175, 16, 12, 0.0009, 15.0, 2.5),
+              bunnyMuzzleMat
+            );
+            muzzleMesh.scale.set(1.28, 0.92, 0.80);
+            muzzleMesh.position.set(0, -0.014, 0.049);
+            headGrp.add(muzzleMesh);
+
+            // Minimalist muted slate-grey nose + understated small stitched smile
+            const noseMesh = new THREE.Mesh(
+              new THREE.SphereGeometry(0.0054, 14, 10),
+              bunnyNoseMat
+            );
+            noseMesh.scale.set(1.18, 0.82, 0.72);
+            noseMesh.position.set(0, -0.007, 0.0615);
+            headGrp.add(noseMesh);
+
+            const smileMat = new THREE.MeshStandardMaterial({
+              color: 0x475569,
+              roughness: 0.78,
+            });
+            [-1, 1].forEach((side) => {
+              const smileCurve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(0, -0.0125, 0.0618),
+                new THREE.Vector3(side * 0.0040, -0.0165, 0.0608),
+                new THREE.Vector3(side * 0.0082, -0.014, 0.0590),
+              ]);
+              const smileStitch = new THREE.Mesh(
+                new THREE.TubeGeometry(smileCurve, 10, 0.0009, 6, false),
+                smileMat
+              );
+              headGrp.add(smileStitch);
+            });
+
+            // Contoured Minimalist Sleeping Eye Mask (眼罩) wrapped snugly across upper face
+            const maskShape = new THREE.Shape();
+            maskShape.moveTo(-0.041, 0.001);
+            maskShape.bezierCurveTo(-0.037, 0.016, -0.016, 0.018, 0.0, 0.012);
+            maskShape.bezierCurveTo(0.016, 0.018, 0.037, 0.016, 0.041, 0.001);
+            maskShape.bezierCurveTo(0.039, -0.013, 0.016, -0.015, 0.007, -0.006);
+            maskShape.quadraticCurveTo(0.0, -0.001, -0.007, -0.006);
+            maskShape.bezierCurveTo(-0.016, -0.015, -0.039, -0.013, -0.041, 0.001);
+
+            const maskGeo = new THREE.ExtrudeGeometry(maskShape, {
+              depth: 0.0048,
+              bevelEnabled: true,
+              bevelThickness: 0.0018,
+              bevelSize: 0.0016,
+              bevelSegments: 4,
+              curveSegments: 28,
+            });
+            maskGeo.translate(0, 0, -0.0024);
+
+            const MASK_CENTER_Y = 0.0125;
+            const maskPos = maskGeo.attributes.position as THREE.BufferAttribute;
+            for (let i = 0; i < maskPos.count; i++) {
+              const vx = maskPos.getX(i);
+              const vy = maskPos.getY(i);
+              const vz = maskPos.getZ(i);
+              const theta = vx / 0.0615;
+              const y = MASK_CENTER_Y + vy;
+              const cosLat = Math.sqrt(Math.max(0.25, 1 - Math.pow(y / 0.0551, 2)));
+              const rX = 0.0638 * cosLat + 0.0042 + vz;
+              const rZ = 0.0568 * cosLat + 0.0042 + vz;
+              maskPos.setXYZ(i, rX * Math.sin(theta), y, rZ * Math.cos(theta));
+            }
+            maskPos.needsUpdate = true;
+            maskGeo.computeVertexNormals();
+
+            const sleepMaskMesh = new THREE.Mesh(maskGeo, bunnyMaskMat);
+            sleepMaskMesh.castShadow = true;
+            sleepMaskMesh.receiveShadow = true;
+            headGrp.add(sleepMaskMesh);
+
+            // Subtle minimalist closed-eye stitch arcs on the sleeping eye mask
+            const maskStitchMat = new THREE.MeshStandardMaterial({
+              color: 0x94a3b8,
+              roughness: 0.8,
+            });
+            [-1, 1].forEach((side) => {
+              const closedPts: THREE.Vector3[] = [];
+              for (let s = 0; s <= 10; s++) {
+                const f = s / 10;
+                const theta = side * (0.20 + f * 0.25);
+                const y = MASK_CENTER_Y - 0.0020 * Math.sin(f * Math.PI);
+                const cosLat = Math.sqrt(Math.max(0.25, 1 - Math.pow(y / 0.0551, 2)));
+                const rX = 0.0638 * cosLat + 0.0085;
+                const rZ = 0.0568 * cosLat + 0.0085;
+                closedPts.push(new THREE.Vector3(rX * Math.sin(theta), y, rZ * Math.cos(theta)));
+              }
+              const closedEyeLine = new THREE.Mesh(
+                new THREE.TubeGeometry(new THREE.CatmullRomCurve3(closedPts), 12, 0.0008, 6, false),
+                maskStitchMat
+              );
+              headGrp.add(closedEyeLine);
+            });
+
+            // Slim elastic strap hugging sides and back of the bunny head
+            const strapPts: THREE.Vector3[] = [];
+            const STRAP_STEPS = 32;
+            const STRAP_START = 0.64;
+            const STRAP_END = Math.PI * 2 - 0.64;
+            const strapCosLat = Math.sqrt(Math.max(0.25, 1 - Math.pow(MASK_CENTER_Y / 0.0551, 2)));
+            for (let i = 0; i <= STRAP_STEPS; i++) {
+              const theta = STRAP_START + ((STRAP_END - STRAP_START) * i) / STRAP_STEPS;
+              const rX = 0.0638 * strapCosLat + 0.0026;
+              const rZ = 0.0568 * strapCosLat + 0.0026;
+              strapPts.push(
+                new THREE.Vector3(rX * Math.sin(theta), MASK_CENTER_Y, rZ * Math.cos(theta))
+              );
+            }
+            const maskStrapMesh = new THREE.Mesh(
+              new THREE.TubeGeometry(new THREE.CatmullRomCurve3(strapPts), 36, 0.0023, 8, false),
+              bunnyMaskStrapMat
+            );
+            maskStrapMesh.castShadow = true;
+            headGrp.add(maskStrapMesh);
+
+            // F. Long Fluffy Blue-Grey Bunny Ears (Left upright, Right gently bent at tip)
+            const buildBunnyEar = (isRightFloppy: boolean) => {
+              const earPivot = new THREE.Group();
+              const earOuterGeo = makeFluffySphereGeo(0.0185, 18, 16, 0.0012, 15.0, isRightFloppy ? 4.2 : 1.7);
+              const earPos = earOuterGeo.attributes.position as THREE.BufferAttribute;
+              for (let i = 0; i < earPos.count; i++) {
+                let x = earPos.getX(i) * 1.06;
+                let y = earPos.getY(i) * 3.12 + 0.055;
+                let z = earPos.getZ(i) * 0.56;
+                const t = THREE.MathUtils.clamp(y / 0.112, 0, 1);
+                if (isRightFloppy) {
+                  z += Math.pow(t, 2.2) * 0.022;
+                  x -= Math.pow(t, 2.0) * 0.010;
+                } else {
+                  z += Math.pow(t, 2.4) * 0.007;
+                }
+                earPos.setXYZ(i, x, y, z);
+              }
+              earPos.needsUpdate = true;
+              earOuterGeo.computeVertexNormals();
+
+              const earOuter = new THREE.Mesh(earOuterGeo, bunnyFurMat);
+              earOuter.castShadow = true;
+              earOuter.receiveShadow = true;
+              earPivot.add(earOuter);
+
+              const earInnerGeo = new THREE.SphereGeometry(0.0110, 14, 12);
+              const iPos = earInnerGeo.attributes.position as THREE.BufferAttribute;
+              for (let i = 0; i < iPos.count; i++) {
+                let x = iPos.getX(i) * 0.90;
+                let y = iPos.getY(i) * 2.50 + 0.052;
+                let z = iPos.getZ(i) * 0.34 + 0.0070;
+                const t = THREE.MathUtils.clamp(y / 0.112, 0, 1);
+                if (isRightFloppy) {
+                  z += Math.pow(t, 2.2) * 0.022;
+                  x -= Math.pow(t, 2.0) * 0.010;
+                } else {
+                  z += Math.pow(t, 2.4) * 0.007;
+                }
+                iPos.setXYZ(i, x, y, z);
+              }
+              iPos.needsUpdate = true;
+              earInnerGeo.computeVertexNormals();
+              const earInner = new THREE.Mesh(earInnerGeo, bunnyInnerEarMat);
+              earPivot.add(earInner);
+
+              return earPivot;
+            };
+
+            const leftEar = buildBunnyEar(false);
+            leftEar.position.set(0.024, 0.044, -0.002);
+            leftEar.rotation.set(0.08, 0.08, -0.18);
+            headGrp.add(leftEar);
+
+            const rightEar = buildBunnyEar(true);
+            rightEar.position.set(-0.024, 0.044, -0.002);
+            rightEar.rotation.set(0.18, -0.10, 0.24);
+            headGrp.add(rightEar);
+
+            bunnyPlushGroup.add(headGrp);
+
+            // Place on the far-right end of the topmost floating horizontal shelf (tier === 3)
+            bunnyPlushGroup.position.set(
+              WALL_SHELF_W / 2 - 0.115,
+              LEDGE_TOP_Y,
+              0.018
+            );
+            bunnyPlushGroup.rotation.y = -0.24;
+            ledgeGroup.add(bunnyPlushGroup);
+          }
+
           coloredRoomGroup.add(ledgeGroup);
         }
 
@@ -9668,6 +10448,16 @@ export const Room3DScene: React.FC = () => {
           secSofaGroup.add(pillow);
         });
 
+        // 候選位置 7：地下室 阿璃的宿舍區 密室區沙發上
+        keySpawnSlots.push({
+          slotId: 'pink_secret_sofa',
+          roomId: 'pink',
+          inSecret: true,
+          parent: secSofaGroup,
+          position: [-0.35, 0.435, -0.02],
+          rotation: [-Math.PI / 2, 0, -0.32],
+        });
+
         secretRoomGroup.add(secSofaGroup);
 
         // Realistic Brown Glass Eyeball resting in back-left corner of Secret Room (阿璃的宿舍 密室區角落：棕色眼睛)
@@ -10761,13 +11551,110 @@ export const Room3DScene: React.FC = () => {
             podRightWall.receiveShadow = true;
             podGroup.add(podRightWall);
 
-            const podBackWall = new THREE.Mesh(
-              new THREE.BoxGeometry(POD_W - 0.01, POD_H - 0.016, 0.05),
-              capWhiteOakMat
-            );
-            podBackWall.position.set(-0.005, POD_H / 2, POD_L / 2 - 0.025);
+            const BW_W = POD_W - 0.01;
+            const BW_H = POD_H - 0.016;
+            const BW_CX = -0.005;
+            const BW_CY = POD_H / 2;
+            const NICHE_CX = -0.11;
+            const NICHE_CY = 0.59;
+            const NICHE_W = 0.44;
+            const NICHE_H = 0.24;
+            const NICHE_D = 0.080; // 8.0cm deep recessed headboard alcove (z: 1.45 -> 1.53)
+
+            const backWallShape = new THREE.Shape();
+            backWallShape.moveTo(-BW_W / 2, -BW_H / 2);
+            backWallShape.lineTo(BW_W / 2, -BW_H / 2);
+            backWallShape.lineTo(BW_W / 2, BW_H / 2);
+            backWallShape.lineTo(-BW_W / 2, BW_H / 2);
+            backWallShape.closePath();
+
+            // Carve rectangular recessed hole in the headboard wall (膠囊艙床頭正面挖洞)
+            const hx = NICHE_CX - BW_CX;
+            const hy = NICHE_CY - BW_CY;
+            const hr = 0.010;
+            const hx0 = hx - NICHE_W / 2;
+            const hx1 = hx + NICHE_W / 2;
+            const hy0 = hy - NICHE_H / 2;
+            const hy1 = hy + NICHE_H / 2;
+            const nicheHolePath = new THREE.Path();
+            nicheHolePath.moveTo(hx0 + hr, hy1);
+            nicheHolePath.lineTo(hx1 - hr, hy1);
+            nicheHolePath.quadraticCurveTo(hx1, hy1, hx1, hy1 - hr);
+            nicheHolePath.lineTo(hx1, hy0 + hr);
+            nicheHolePath.quadraticCurveTo(hx1, hy0, hx1 - hr, hy0);
+            nicheHolePath.lineTo(hx0 + hr, hy0);
+            nicheHolePath.quadraticCurveTo(hx0, hy0, hx0, hy0 + hr);
+            nicheHolePath.lineTo(hx0, hy1 - hr);
+            nicheHolePath.quadraticCurveTo(hx0, hy1, hx0 + hr, hy1);
+            backWallShape.holes.push(nicheHolePath);
+
+            const podBackWallGeo = new THREE.ExtrudeGeometry(backWallShape, {
+              depth: 0.05,
+              bevelEnabled: false,
+              curveSegments: 8,
+            });
+            // Normalize UVs cleanly across the carved headboard wall so white-oak grain stays distortion-free
+            const bwPos = podBackWallGeo.attributes.position as THREE.BufferAttribute;
+            const bwUv = new Float32Array(bwPos.count * 2);
+            for (let i = 0; i < bwPos.count; i++) {
+              bwUv[i * 2] = (bwPos.getX(i) + BW_W / 2) / BW_W;
+              bwUv[i * 2 + 1] = (bwPos.getY(i) + BW_H / 2) / BW_H;
+            }
+            podBackWallGeo.setAttribute('uv', new THREE.BufferAttribute(bwUv, 2));
+
+            const podBackWall = new THREE.Mesh(podBackWallGeo, capWhiteOakMat);
+            podBackWall.position.set(BW_CX, BW_CY, POD_L / 2 - 0.05);
             podBackWall.receiveShadow = true;
             podGroup.add(podBackWall);
+
+            // Recessed headboard alcove pocket lining (floor shelf, ceiling, side walls & recessed back panel)
+            const nichePocketGrp = new THREE.Group();
+            nichePocketGrp.position.set(NICHE_CX, NICHE_CY, POD_L / 2 - 0.05);
+
+            const nicheFloor = new THREE.Mesh(
+              new THREE.BoxGeometry(NICHE_W + 0.020, 0.010, NICHE_D + 0.012),
+              capWhiteOakMat
+            );
+            nicheFloor.position.set(0, -NICHE_H / 2 - 0.005, NICHE_D / 2 + 0.004);
+            nicheFloor.receiveShadow = true;
+            nicheFloor.castShadow = true;
+            nichePocketGrp.add(nicheFloor);
+
+            const nicheCeiling = new THREE.Mesh(
+              new THREE.BoxGeometry(NICHE_W + 0.020, 0.010, NICHE_D + 0.012),
+              capWhiteOakMat
+            );
+            nicheCeiling.position.set(0, NICHE_H / 2 + 0.005, NICHE_D / 2 + 0.004);
+            nicheCeiling.receiveShadow = true;
+            nichePocketGrp.add(nicheCeiling);
+
+            [-1, 1].forEach((sideSign) => {
+              const nicheSide = new THREE.Mesh(
+                new THREE.BoxGeometry(0.010, NICHE_H + 0.020, NICHE_D + 0.012),
+                capWhiteOakMat
+              );
+              nicheSide.position.set(sideSign * (NICHE_W / 2 + 0.005), 0, NICHE_D / 2 + 0.004);
+              nicheSide.receiveShadow = true;
+              nichePocketGrp.add(nicheSide);
+            });
+
+            const nicheBackPanel = new THREE.Mesh(
+              new THREE.BoxGeometry(NICHE_W + 0.020, NICHE_H + 0.020, 0.012),
+              capInteriorWallMat
+            );
+            nicheBackPanel.position.set(0, 0, NICHE_D + 0.006);
+            nicheBackPanel.receiveShadow = true;
+            nichePocketGrp.add(nicheBackPanel);
+
+            // Slim recessed top alcove accent bezel & subtle light strip inside the carved opening
+            const nicheTopRim = new THREE.Mesh(
+              new THREE.BoxGeometry(NICHE_W - 0.014, 0.004, 0.006),
+              capInteriorLedMat
+            );
+            nicheTopRim.position.set(0, NICHE_H / 2 - 0.002, 0.022);
+            nichePocketGrp.add(nicheTopRim);
+
+            podGroup.add(nichePocketGrp);
 
             // Cozy capsule interior: full-length white futon, extended light-blue pad reaching the door, 3 fluffy marshmallow pillows, and full-length oak shelf (床墊與架子延伸至床尾門前 + 棉花糖造型枕頭×3)
             const futon = new THREE.Mesh(
@@ -11380,6 +12267,16 @@ export const Room3DScene: React.FC = () => {
               podGroup.add(shelfBracket);
             });
 
+            // 候選位置 4：地下室 阿璃的宿舍區 膠囊艙的架子上
+            keySpawnSlots.push({
+              slotId: 'pink_capsule_shelf',
+              roomId: 'pink',
+              inSecret: false,
+              parent: podGroup,
+              position: [-POD_W / 2 + wallT + 0.07, 0.436, 0.35],
+              rotation: [-Math.PI / 2, 0, 0.85],
+            });
+
             // Movie Poster taped cleanly on leftmost capsule wall directly beside/above innerShelf (膠囊艙架子最左邊牆面海報)
             const kamenPosterTex = textureLoader.load('/assets/capsule_kamen_poster.webp');
             kamenPosterTex.colorSpace = THREE.SRGBColorSpace;
@@ -11620,6 +12517,383 @@ export const Room3DScene: React.FC = () => {
             capsuleIdolCdGroup.rotation.y = Math.PI / 2;
             podGroup.add(capsuleIdolCdGroup);
 
+            // Purple Metallic Cylindrical Artifact with Photo-Mapped Textures, Recessed 3D Inner Eyes & Zig-Zag Inner Teeth (膠囊艙架上的紫色圓柱體模型：貼附實拍材質貼圖、內側牙齒與眼睛)
+            const cylGroup = new THREE.Group();
+            const CYL_OUTER_R = 0.031;
+            const CYL_INNER_R = 0.0266;
+            const CYL_CORE_R = 0.0238;
+            const CYL_H = 0.114;
+
+            // 1. Load Extracted Photo Textures (Inner Parchment Core + Outer Metallic Purple Shell & Bump Map)
+            const cylInnerTex = textureLoader.load('/assets/capsule_cyl_inner_tex.webp');
+            cylInnerTex.colorSpace = THREE.SRGBColorSpace;
+            cylInnerTex.wrapS = THREE.RepeatWrapping;
+            cylInnerTex.wrapT = THREE.ClampToEdgeWrapping;
+            cylInnerTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+            extraRoomTexturesToDispose.push(cylInnerTex);
+
+            const cylOuterTex = textureLoader.load('/assets/capsule_cyl_outer_tex.webp');
+            cylOuterTex.colorSpace = THREE.SRGBColorSpace;
+            cylOuterTex.wrapS = THREE.RepeatWrapping;
+            cylOuterTex.wrapT = THREE.ClampToEdgeWrapping;
+            cylOuterTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+            extraRoomTexturesToDispose.push(cylOuterTex);
+
+            const cylOuterBump = textureLoader.load('/assets/capsule_cyl_outer_bump.webp');
+            cylOuterBump.wrapS = THREE.RepeatWrapping;
+            cylOuterBump.wrapT = THREE.ClampToEdgeWrapping;
+            cylOuterBump.anisotropy = renderer.capabilities.getMaxAnisotropy();
+            extraRoomTexturesToDispose.push(cylOuterBump);
+
+            const cylPurpleMat = new THREE.MeshPhysicalMaterial({
+              color: 0xffffff,
+              map: cylOuterTex,
+              bumpMap: cylOuterBump,
+              bumpScale: 0.0014,
+              roughness: 0.25,
+              metalness: 0.56,
+              clearcoat: 0.78,
+              clearcoatRoughness: 0.14,
+              envMapIntensity: 1.35,
+            });
+            const cylPurpleToothMat = new THREE.MeshPhysicalMaterial({
+              color: 0x4b49ab,
+              roughness: 0.26,
+              metalness: 0.56,
+              clearcoat: 0.76,
+              clearcoatRoughness: 0.14,
+              envMapIntensity: 1.30,
+            });
+            const cylBlackCapMat = new THREE.MeshPhysicalMaterial({
+              color: 0x15171d,
+              roughness: 0.18,
+              metalness: 0.35,
+              clearcoat: 0.92,
+              clearcoatRoughness: 0.08,
+              envMapIntensity: 1.25,
+            });
+            const cylInnerSocketMat = new THREE.MeshStandardMaterial({
+              color: 0x161922,
+              roughness: 0.68,
+              metalness: 0.30,
+            });
+            const cylInnerEyeMat = new THREE.MeshPhysicalMaterial({
+              color: 0xa4adbe,
+              roughness: 0.22,
+              metalness: 0.76,
+              clearcoat: 0.85,
+              envMapIntensity: 1.35,
+            });
+            const cylInnerToothMat = new THREE.MeshPhysicalMaterial({
+              color: 0xd6d0ee,
+              roughness: 0.28,
+              metalness: 0.42,
+              clearcoat: 0.65,
+              envMapIntensity: 1.10,
+            });
+
+            // 2. Inner Parchment Core Cylinder (warm cream sleeve + photo-mapped scroll window facing +Z)
+            const innerCoreSleeve = new THREE.Mesh(
+              new THREE.CylinderGeometry(CYL_CORE_R - 0.0002, CYL_CORE_R - 0.0002, CYL_H - 0.012, 32),
+              new THREE.MeshStandardMaterial({
+                color: 0xddcfba,
+                roughness: 0.84,
+                metalness: 0.02,
+                envMapIntensity: 0.30,
+              })
+            );
+            innerCoreSleeve.position.y = CYL_H / 2;
+            cylGroup.add(innerCoreSleeve);
+
+            const innerCoreMesh = new THREE.Mesh(
+              new THREE.CylinderGeometry(CYL_CORE_R, CYL_CORE_R, 0.0472, 40, 1, true),
+              new THREE.MeshStandardMaterial({
+                map: cylInnerTex,
+                roughness: 0.80,
+                metalness: 0.02,
+                envMapIntensity: 0.35,
+              })
+            );
+            innerCoreMesh.position.y = 0.0458;
+            innerCoreMesh.rotation.y = Math.PI;
+            cylGroup.add(innerCoreMesh);
+
+            // Recessed dark inner visor backing band behind the two eye sockets
+            const eyeBackingBand = new THREE.Mesh(
+              new THREE.CylinderGeometry(CYL_CORE_R + 0.0008, CYL_CORE_R + 0.0008, 0.022, 32),
+              cylInnerSocketMat
+            );
+            eyeBackingBand.position.y = 0.084;
+            cylGroup.add(eyeBackingBand);
+
+            // 3. Sculpted 3D Inner Eyes recessed inside the left & right eye cavities (內側的眼睛)
+            [-0.43, 0.43].forEach((eyeTheta) => {
+              const eyeSocketGrp = new THREE.Group();
+              const eyeR = CYL_CORE_R + 0.0022;
+              eyeSocketGrp.position.set(
+                Math.sin(eyeTheta) * eyeR,
+                0.084,
+                Math.cos(eyeTheta) * eyeR
+              );
+              eyeSocketGrp.rotation.y = eyeTheta;
+
+              // Outer curved metallic eyeball dome
+              const eyeballMesh = new THREE.Mesh(
+                new THREE.SphereGeometry(0.0072, 20, 14),
+                cylInnerEyeMat
+              );
+              eyeballMesh.scale.set(1.32, 0.76, 0.60);
+              eyeballMesh.castShadow = true;
+              eyeSocketGrp.add(eyeballMesh);
+
+              // Upper recessed dark eyelid shadow hood
+              const eyeUpperShadow = new THREE.Mesh(
+                new THREE.BoxGeometry(0.0175, 0.0042, 0.0055),
+                cylInnerSocketMat
+              );
+              eyeUpperShadow.position.set(0, 0.0030, 0.0020);
+              eyeSocketGrp.add(eyeUpperShadow);
+
+              // Recessed horizontal mechanical eyelid/visor slit across each inner eye
+              const eyeSlitMesh = new THREE.Mesh(
+                new THREE.BoxGeometry(0.0165, 0.0018, 0.0050),
+                cylInnerSocketMat
+              );
+              eyeSlitMesh.position.set(0, -0.0005, 0.0030);
+              eyeSocketGrp.add(eyeSlitMesh);
+
+              // Subtle lower silver rim highlight beneath slit
+              const eyePupilHighlight = new THREE.Mesh(
+                new THREE.SphereGeometry(0.0026, 12, 10),
+                new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.18, metalness: 0.85 })
+              );
+              eyePupilHighlight.scale.set(1.4, 0.65, 0.5);
+              eyePupilHighlight.position.set(0, -0.0020, 0.0036);
+              eyeSocketGrp.add(eyePupilHighlight);
+
+              cylGroup.add(eyeSocketGrp);
+            });
+
+            // Helper to assign exact cylindrical UVs matching capsule_cyl_outer_tex.webp (+Z -> u=0.5, y=0..CYL_H -> v=0..1)
+            const assignCylindricalUVs = (geo: THREE.BufferGeometry, yOffset: number) => {
+              const outGeo = geo.index ? geo.toNonIndexed() : geo;
+              const posAttr = outGeo.attributes.position as THREE.BufferAttribute;
+              const uvArr = new Float32Array(posAttr.count * 2);
+              for (let i = 0; i < posAttr.count; i += 3) {
+                const us: number[] = [];
+                for (let k = 0; k < 3; k++) {
+                  const idx = i + k;
+                  const wx = posAttr.getX(idx);
+                  const wy = posAttr.getY(idx) + yOffset;
+                  const wz = posAttr.getZ(idx);
+                  const theta = Math.atan2(wx, wz);
+                  const u = theta / (Math.PI * 2) + 0.5;
+                  const v = THREE.MathUtils.clamp(wy / CYL_H, 0, 1);
+                  us.push(u);
+                  uvArr[idx * 2] = u;
+                  uvArr[idx * 2 + 1] = v;
+                }
+                const uMin = Math.min(us[0], us[1], us[2]);
+                const uMax = Math.max(us[0], us[1], us[2]);
+                if (uMax - uMin > 0.5) {
+                  for (let k = 0; k < 3; k++) {
+                    const idx = i + k;
+                    if (uvArr[idx * 2] < 0.5) uvArr[idx * 2] += 1.0;
+                  }
+                }
+              }
+              outGeo.setAttribute('uv', new THREE.BufferAttribute(uvArr, 2));
+              outGeo.computeVertexNormals();
+              return outGeo;
+            };
+
+            // Helper to build a hollow annular cylinder arc with real shell thickness and cylindrical photo UVs
+            const makeShellArc = (
+              rIn: number,
+              rOut: number,
+              h: number,
+              startAng: number,
+              endAng: number,
+              yPos: number,
+              mat: THREE.Material
+            ) => {
+              const s = new THREE.Shape();
+              s.absarc(0, 0, rOut, startAng, endAng, false);
+              s.absarc(0, 0, rIn, endAng, startAng, true);
+              s.closePath();
+              const rawGeo = new THREE.ExtrudeGeometry(s, {
+                depth: h,
+                bevelEnabled: false,
+                curveSegments: 36,
+              });
+              rawGeo.rotateX(-Math.PI / 2);
+              const geo = assignCylindricalUVs(rawGeo, yPos);
+              rawGeo.dispose();
+              const m = new THREE.Mesh(geo, mat);
+              m.position.y = yPos;
+              m.castShadow = true;
+              m.receiveShadow = true;
+              return m;
+            };
+
+            // 4. Outer Photo-Textured Purple Shell Body & Top/Bottom Collar Rings
+            // Back & side wall leaving front mouth/eye window open across theta ∈ [-0.66, +0.66]
+            cylGroup.add(
+              makeShellArc(
+                CYL_INNER_R,
+                CYL_OUTER_R,
+                0.0670,
+                -Math.PI / 2 + 0.66,
+                (3 * Math.PI) / 2 - 0.66,
+                0.0225,
+                cylPurpleMat
+              )
+            );
+            // Full 360° upper crown collar (carries photo-textured forehead diamond crest & top armor grooves)
+            cylGroup.add(
+              makeShellArc(CYL_INNER_R, CYL_OUTER_R, 0.0245, 0, Math.PI * 2, 0.0895, cylPurpleMat)
+            );
+            // Full 360° lower chin & skirt collar
+            cylGroup.add(
+              makeShellArc(CYL_INNER_R, CYL_OUTER_R, 0.0185, 0, Math.PI * 2, 0.0040, cylPurpleMat)
+            );
+            // Bottom notched foot ring (theta ∈ [-0.17, +0.17] open notch at front center)
+            cylGroup.add(
+              makeShellArc(
+                CYL_INNER_R + 0.0005,
+                CYL_OUTER_R - 0.001,
+                0.0040,
+                -Math.PI / 2 + 0.17,
+                (3 * Math.PI) / 2 - 0.17,
+                0,
+                cylPurpleMat
+              )
+            );
+
+            // Top closed shoulder plate & glossy black rounded cap button
+            const topCapPlateRaw = new THREE.CylinderGeometry(CYL_OUTER_R - 0.002, CYL_OUTER_R, 0.005, 32);
+            const topCapPlateGeo = assignCylindricalUVs(topCapPlateRaw, CYL_H - 0.0025);
+            topCapPlateRaw.dispose();
+            const topCapPlate = new THREE.Mesh(topCapPlateGeo, cylPurpleMat);
+            topCapPlate.position.y = CYL_H - 0.0025;
+            topCapPlate.castShadow = true;
+            cylGroup.add(topCapPlate);
+
+            const blackTopCollar = new THREE.Mesh(
+              new THREE.CylinderGeometry(0.0175, 0.0185, 0.011, 24),
+              cylBlackCapMat
+            );
+            blackTopCollar.position.y = CYL_H + 0.0055;
+            blackTopCollar.castShadow = true;
+            cylGroup.add(blackTopCollar);
+
+            const blackTopDome = new THREE.Mesh(
+              new THREE.SphereGeometry(0.0175, 24, 14, 0, Math.PI * 2, 0, Math.PI / 2),
+              cylBlackCapMat
+            );
+            blackTopDome.scale.y = 0.28;
+            blackTopDome.position.y = CYL_H + 0.0105;
+            cylGroup.add(blackTopDome);
+
+            // 5. Front Faceplate Armor: Curved Photo-Mapped Nose Bridge & Cheek Divider Bar
+            // Curved nose bridge between the two eyes (carries real ribbed & V-chevron nose texture + 3D relief)
+            cylGroup.add(
+              makeShellArc(
+                CYL_INNER_R,
+                CYL_OUTER_R + 0.0012,
+                0.0205,
+                -Math.PI / 2 - 0.21,
+                -Math.PI / 2 + 0.21,
+                0.0700,
+                cylPurpleMat
+              )
+            );
+
+            // Curved cheek bar separating eye sockets from the mouth cavity
+            cylGroup.add(
+              makeShellArc(
+                CYL_INNER_R,
+                CYL_OUTER_R + 0.0005,
+                0.0085,
+                -Math.PI / 2 - 0.68,
+                -Math.PI / 2 + 0.68,
+                0.0700,
+                cylPurpleMat
+              )
+            );
+
+            // 6. Modeled 3D Upper & Lower Zig-Zag Teeth along the Mouth Cavity (內側與外緣的尖銳牙齒)
+            const makeToothMesh = (w: number, h: number, d: number, mat: THREE.Material) => {
+              const ts = new THREE.Shape();
+              ts.moveTo(-w / 2, 0);
+              ts.lineTo(w / 2, 0);
+              ts.lineTo(0, h);
+              ts.closePath();
+              const tGeo = new THREE.ExtrudeGeometry(ts, {
+                depth: d,
+                bevelEnabled: true,
+                bevelThickness: 0.0006,
+                bevelSize: 0.0005,
+                bevelSegments: 1,
+              });
+              tGeo.translate(0, 0, -d / 2);
+              const tMesh = new THREE.Mesh(tGeo, mat);
+              tMesh.castShadow = true;
+              tMesh.receiveShadow = true;
+              return tMesh;
+            };
+
+            const TOOTH_COUNT = 7;
+            for (let ti = 0; ti < TOOTH_COUNT; ti++) {
+              const frac = (ti / (TOOTH_COUNT - 1)) * 2 - 1; // -1 .. +1
+              const upperTheta = frac * 0.54;
+              // Upper outer purple fang pointing downward
+              const upperPurpleTooth = makeToothMesh(0.0052, 0.0068, 0.0038, cylPurpleToothMat);
+              upperPurpleTooth.position.set(
+                Math.sin(upperTheta) * (CYL_OUTER_R - 0.0010),
+                0.0704,
+                Math.cos(upperTheta) * (CYL_OUTER_R - 0.0010)
+              );
+              upperPurpleTooth.rotation.set(Math.PI, upperTheta, 0);
+              cylGroup.add(upperPurpleTooth);
+
+              // Upper recessed inner tooth pointing downward inside the mouth cavity
+              const upperInnerTooth = makeToothMesh(0.0042, 0.0064, 0.0030, cylInnerToothMat);
+              upperInnerTooth.position.set(
+                Math.sin(upperTheta) * (CYL_INNER_R - 0.0006),
+                0.0700,
+                Math.cos(upperTheta) * (CYL_INNER_R - 0.0006)
+              );
+              upperInnerTooth.rotation.set(Math.PI, upperTheta, 0);
+              cylGroup.add(upperInnerTooth);
+
+              // Lower jaw teeth staggered slightly for interlocking sawtooth bite
+              const lowerTheta = frac * 0.52 + (ti < TOOTH_COUNT - 1 ? 0.040 : -0.032);
+              const lowerPurpleTooth = makeToothMesh(0.0052, 0.0068, 0.0038, cylPurpleToothMat);
+              lowerPurpleTooth.position.set(
+                Math.sin(lowerTheta) * (CYL_OUTER_R - 0.0010),
+                0.0222,
+                Math.cos(lowerTheta) * (CYL_OUTER_R - 0.0010)
+              );
+              lowerPurpleTooth.rotation.y = lowerTheta;
+              cylGroup.add(lowerPurpleTooth);
+
+              const lowerInnerTooth = makeToothMesh(0.0042, 0.0064, 0.0030, cylInnerToothMat);
+              lowerInnerTooth.position.set(
+                Math.sin(lowerTheta) * (CYL_INNER_R - 0.0006),
+                0.0226,
+                Math.cos(lowerTheta) * (CYL_INNER_R - 0.0006)
+              );
+              lowerInnerTooth.rotation.y = lowerTheta;
+              cylGroup.add(lowerInnerTooth);
+            }
+
+            // Shrink slightly and stand inside the carved headboard niche on the left side facing out (-Z)
+            cylGroup.scale.setScalar(0.72);
+            cylGroup.position.set(0.045, NICHE_CY - NICHE_H / 2, POD_L / 2 - 0.05 + 0.038);
+            cylGroup.rotation.y = Math.PI - 0.20;
+            podGroup.add(cylGroup);
+
             // 2. Uchiwa Support Fan mounted on Interior Capsule Side Wall near Doorway (膠囊艙內稍微靠門口側牆面的推扇)
             uchiwaFanGroup.scale.setScalar(1.16);
             uchiwaFanGroup.position.set(-POD_W / 2 + wallT + 0.008, 0.80, -0.92);
@@ -11660,18 +12934,178 @@ export const Room3DScene: React.FC = () => {
             capsuleMainLightFrontRef.current = interiorPodLightFront;
             podGroup.add(interiorPodLightFront);
 
-            // Headboard Bedside Light Switch Panel moved to Right Side (-X when facing headboard +Z)
+            // Headboard Recessed Niche Console: 2× Power Outlets + Plugged-In Phone Charging Cable + Light Switch
             capsuleLightModeRef.current = 0;
-            const headWallInnerZ = POD_L / 2 - 0.05; // 1.45m (front face of podBackWall)
+            const nicheWallFrontZ = POD_L / 2 - 0.05 + NICHE_D; // 1.530m (front face of recessed niche back panel)
+            const nicheShelfY = NICHE_CY - NICHE_H / 2; // 0.470m
 
-            const switchGroup = new THREE.Group();
-            switchGroup.position.set(-0.34, 0.56, headWallInnerZ);
+            // Duplex 2-Outlet Wall Plate mounted at center of recessed headboard back panel
+            const outletGroup = new THREE.Group();
+            outletGroup.position.set(-0.095, 0.605, nicheWallFrontZ);
 
-            const switchPlate = new THREE.Mesh(
-              new THREE.BoxGeometry(0.088, 0.088, 0.010),
+            const outletPlate = new THREE.Mesh(
+              new THREE.BoxGeometry(0.118, 0.072, 0.007),
               capBezelMat
             );
-            switchPlate.position.z = -0.005;
+            outletPlate.position.z = -0.0035;
+            outletPlate.castShadow = true;
+            outletPlate.receiveShadow = true;
+            outletGroup.add(outletPlate);
+
+            const outletPlateFrame = new THREE.Mesh(
+              new THREE.BoxGeometry(0.104, 0.058, 0.002),
+              capDarkTrimMat
+            );
+            outletPlateFrame.position.z = -0.0065;
+            outletGroup.add(outletPlateFrame);
+
+            const outletInnerFace = new THREE.Mesh(
+              new THREE.BoxGeometry(0.100, 0.054, 0.003),
+              capBezelMat
+            );
+            outletInnerFace.position.z = -0.0075;
+            outletGroup.add(outletInnerFace);
+
+            const outletSlotMat = new THREE.MeshStandardMaterial({
+              color: 0x111827,
+              roughness: 0.6,
+              metalness: 0.1,
+            });
+            const socketWellMat = new THREE.MeshStandardMaterial({
+              color: 0xe2e8f0,
+              roughness: 0.35,
+              metalness: 0.05,
+            });
+
+            // Two grounded 3-prong sockets side by side (+0.028 left, -0.028 right)
+            [0.028, -0.028].forEach((sx) => {
+              const sockWell = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.015, 0.015, 0.003, 20),
+                socketWellMat
+              );
+              sockWell.rotation.x = Math.PI / 2;
+              sockWell.position.set(sx, 0, -0.0092);
+              outletGroup.add(sockWell);
+
+              // Two parallel vertical power slots
+              [-0.0046, 0.0046].forEach((px) => {
+                const bladeSlot = new THREE.Mesh(
+                  new THREE.BoxGeometry(0.0022, 0.0080, 0.0020),
+                  outletSlotMat
+                );
+                bladeSlot.position.set(sx + px, 0.0035, -0.0104);
+                outletGroup.add(bladeSlot);
+              });
+
+              // Round ground pin hole below the two blades
+              const groundHole = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.0022, 0.0022, 0.0020, 12),
+                outletSlotMat
+              );
+              groundHole.rotation.x = Math.PI / 2;
+              groundHole.position.set(sx, -0.0055, -0.0104);
+              outletGroup.add(groundHole);
+            });
+
+            // Small faceplate center screw detail
+            const outletScrew = new THREE.Mesh(
+              new THREE.CylinderGeometry(0.0024, 0.0024, 0.0020, 12),
+              capMetalMat
+            );
+            outletScrew.rotation.x = Math.PI / 2;
+            outletScrew.position.set(0, 0, -0.0096);
+            outletGroup.add(outletScrew);
+
+            // Compact White USB-C Power Adapter plugged into the Left Outlet (+0.028), leaving Right Outlet visible
+            const chargerMat = new THREE.MeshPhysicalMaterial({
+              color: 0xf8fafc,
+              roughness: 0.22,
+              metalness: 0.04,
+              clearcoat: 0.6,
+            });
+            const chargerBlock = new THREE.Mesh(
+              new THREE.BoxGeometry(0.032, 0.032, 0.028),
+              chargerMat
+            );
+            chargerBlock.position.set(0.028, 0, -0.023);
+            chargerBlock.castShadow = true;
+            outletGroup.add(chargerBlock);
+
+            const chargerPortRim = new THREE.Mesh(
+              new THREE.CylinderGeometry(0.0055, 0.0055, 0.006, 14),
+              capDarkTrimMat
+            );
+            chargerPortRim.rotation.x = Math.PI / 2;
+            chargerPortRim.position.set(0.028, -0.004, -0.038);
+            outletGroup.add(chargerPortRim);
+
+            podGroup.add(outletGroup);
+
+            // Phone Charging Cable plugged into the adapter, coiled smoothly onto the niche floor with USB-C tip
+            const cableMat = new THREE.MeshStandardMaterial({
+              color: 0xf1f5f9,
+              roughness: 0.42,
+              metalness: 0.04,
+            });
+            const cablePoints = [
+              new THREE.Vector3(-0.067, 0.601, nicheWallFrontZ - 0.040), // plugged into charger front
+              new THREE.Vector3(-0.067, 0.562, nicheWallFrontZ - 0.046), // gentle droop down
+              new THREE.Vector3(-0.058, nicheShelfY + 0.016, nicheWallFrontZ - 0.038),
+              new THREE.Vector3(-0.062, nicheShelfY + 0.003, nicheWallFrontZ - 0.020), // touches niche shelf
+              new THREE.Vector3(-0.115, nicheShelfY + 0.003, nicheWallFrontZ - 0.016), // back arc across shelf
+              new THREE.Vector3(-0.165, nicheShelfY + 0.003, nicheWallFrontZ - 0.035), // right loop
+              new THREE.Vector3(-0.145, nicheShelfY + 0.003, nicheWallFrontZ - 0.062), // front-right loop
+              new THREE.Vector3(-0.095, nicheShelfY + 0.003, nicheWallFrontZ - 0.066), // straight toward front lip
+            ];
+            const cableCurve = new THREE.CatmullRomCurve3(cablePoints);
+            const chargingCableMesh = new THREE.Mesh(
+              new THREE.TubeGeometry(cableCurve, 56, 0.0024, 8, false),
+              cableMat
+            );
+            chargingCableMesh.castShadow = true;
+            chargingCableMesh.receiveShadow = true;
+            podGroup.add(chargingCableMesh);
+
+            // Phone Connector Plug Head (strain-relief boot + silver shell + gold USB-C/Lightning tip)
+            const phonePlugGroup = new THREE.Group();
+            phonePlugGroup.position.set(-0.095, nicheShelfY + 0.0035, nicheWallFrontZ - 0.066);
+            phonePlugGroup.rotation.y = -Math.PI / 2 + 0.08;
+
+            const plugBoot = new THREE.Mesh(
+              new THREE.CylinderGeometry(0.0034, 0.0028, 0.012, 12),
+              cableMat
+            );
+            plugBoot.rotation.x = Math.PI / 2;
+            plugBoot.position.z = 0.006;
+            phonePlugGroup.add(plugBoot);
+
+            const plugMetalShell = new THREE.Mesh(
+              new THREE.BoxGeometry(0.0084, 0.0046, 0.011),
+              capMetalMat
+            );
+            plugMetalShell.position.z = -0.004;
+            plugMetalShell.castShadow = true;
+            phonePlugGroup.add(plugMetalShell);
+
+            const plugTip = new THREE.Mesh(
+              new THREE.BoxGeometry(0.0058, 0.0022, 0.0065),
+              new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.25, metalness: 0.85 })
+            );
+            plugTip.position.z = -0.012;
+            phonePlugGroup.add(plugTip);
+
+            podGroup.add(phonePlugGroup);
+
+            // Capsule Bedside Light Switch Panel mounted inside the Right Side of the Recessed Niche
+            const switchGroup = new THREE.Group();
+            switchGroup.position.set(-0.250, 0.605, nicheWallFrontZ);
+            switchGroup.scale.setScalar(0.84);
+
+            const switchPlate = new THREE.Mesh(
+              new THREE.BoxGeometry(0.088, 0.088, 0.008),
+              capBezelMat
+            );
+            switchPlate.position.z = -0.004;
             switchPlate.castShadow = true;
             switchGroup.add(switchPlate);
 
@@ -11679,14 +13113,14 @@ export const Room3DScene: React.FC = () => {
               new THREE.BoxGeometry(0.054, 0.054, 0.006),
               capDarkTrimMat
             );
-            switchBezel.position.z = -0.011;
+            switchBezel.position.z = -0.010;
             switchGroup.add(switchBezel);
 
             const switchBtnMesh = new THREE.Mesh(
               new THREE.BoxGeometry(0.044, 0.044, 0.010),
               capDoorMat
             );
-            switchBtnMesh.position.z = -0.016;
+            switchBtnMesh.position.z = -0.015;
             switchBtnMesh.castShadow = true;
             capsuleSwitchBtnRef.current = switchBtnMesh;
             switchGroup.add(switchBtnMesh);
@@ -11703,12 +13137,12 @@ export const Room3DScene: React.FC = () => {
               new THREE.BoxGeometry(0.018, 0.004, 0.003),
               switchLedMat
             );
-            switchLedDot.position.set(0, 0.012, -0.021);
+            switchLedDot.position.set(0, 0.012, -0.020);
             switchGroup.add(switchLedDot);
 
-            // Invisible generous tap hitbox centered on the right-side switch panel
+            // Invisible generous tap hitbox centered on the recessed light switch panel
             const switchHitbox = new THREE.Mesh(
-              new THREE.BoxGeometry(0.18, 0.18, 0.12),
+              new THREE.BoxGeometry(0.14, 0.14, 0.12),
               new THREE.MeshBasicMaterial({ visible: false })
             );
             switchHitbox.name = 'capsule_light_switch_hitbox';
@@ -12326,7 +13760,7 @@ export const Room3DScene: React.FC = () => {
         const decorNotes: Array<{ x: number; y: number; w: number; h: number; col: number; rz: number; pinCol: number }> = [
           { x: -0.92, y: 0.56, w: 0.17, h: 0.17, col: 0xfef08a, rz: -0.06, pinCol: 0xf472b6 },
           { x: -0.88, y: -0.22, w: 0.22, h: 0.16, col: 0xe0f2fe, rz: 0.05, pinCol: 0x38bdf8 },
-          { x: 0.62, y: -0.44, w: 0.18, h: 0.18, col: 0xfce7f3, rz: -0.04, pinCol: 0xa855f7 },
+          { x: 0.36, y: -0.48, w: 0.18, h: 0.18, col: 0xfce7f3, rz: -0.04, pinCol: 0xa855f7 },
         ];
         decorNotes.forEach((n) => {
           const noteMesh = new THREE.Mesh(
@@ -12342,6 +13776,49 @@ export const Room3DScene: React.FC = () => {
           notePin.position.set(n.x, n.y + n.h * 0.38, 0.014);
           corkboardGroup.add(notePin);
         });
+
+        // 3. Bottom-Right Corner Torn-Parchment Wanted Poster ("TAKANEKO NEWS / SUZUMI SU 822") matching wall poster dimensions (0.612 × 0.816)
+        const corkBottomRightA3Tex = textureLoader.load('/assets/corkboard_a3_bottom_right.webp');
+        corkBottomRightA3Tex.colorSpace = THREE.SRGBColorSpace;
+        corkBottomRightA3Tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        extraRoomTexturesToDispose.push(corkBottomRightA3Tex);
+
+        const CORK_A3_BR_W = 0.612; // Exact match to wall wanted poster width
+        const CORK_A3_BR_H = 0.816; // Exact match to wall wanted poster height
+        const corkBrA3Group = new THREE.Group();
+        corkBrA3Group.position.set(0.95, -0.53, 0.017);
+        corkBrA3Group.rotation.z = -0.02;
+
+        const corkBrA3Mesh = new THREE.Mesh(
+          new THREE.PlaneGeometry(CORK_A3_BR_W, CORK_A3_BR_H),
+          new THREE.MeshStandardMaterial({
+            map: corkBottomRightA3Tex,
+            color: 0xffffff,
+            transparent: true,
+            alphaTest: 0.35,
+            roughness: 0.78,
+            metalness: 0.0,
+            envMapIntensity: 0.26,
+          })
+        );
+        corkBrA3Mesh.castShadow = true;
+        corkBrA3Mesh.receiveShadow = true;
+        corkBrA3Group.add(corkBrA3Mesh);
+
+        [-0.165, 0.165].forEach((px) => {
+          const pin = createPushPin(0xdc2626);
+          pin.position.set(px, CORK_A3_BR_H / 2 - 0.048, 0.001);
+          corkBrA3Group.add(pin);
+        });
+        const brTopTape = new THREE.Mesh(
+          new THREE.PlaneGeometry(0.068, 0.016),
+          maskingTapeMat
+        );
+        brTopTape.position.set(0, CORK_A3_BR_H / 2 - 0.022, 0.0012);
+        brTopTape.rotation.z = 0.03;
+        corkBrA3Group.add(brTopTape);
+
+        corkboardGroup.add(corkBrA3Group);
 
         capsuleStackGroup.add(corkboardGroup);
 
@@ -13236,6 +14713,16 @@ export const Room3DScene: React.FC = () => {
         beanbagGroup.rotation.y = Math.PI + 0.38;
         coloredRoomGroup.add(beanbagGroup);
 
+        // 候選位置 8：地下室 阿璃的宿舍區 懶骨頭前面的地上
+        keySpawnSlots.push({
+          slotId: 'pink_beanbag_front_floor',
+          roomId: 'pink',
+          inSecret: false,
+          parent: coloredRoomGroup,
+          position: [0.91, 0.028, 1.25],
+          rotation: [-Math.PI / 2, 0, 0.55],
+        });
+
         // Light-Blue Short-Pile Round Rug (地毯移到懶骨頭右前方 櫃子前面一點的位置 並放大尺寸)
         const rugColorCanvas = document.createElement('canvas');
         rugColorCanvas.width = 512;
@@ -14066,6 +15553,19 @@ export const Room3DScene: React.FC = () => {
       foyerState.plaqueMat = foyerDoor1.plaqueMat;
       foyerState.sectorMats = foyerDoor1.sectorMats;
       foyerState.rimGemMats = foyerDoor1.rimGemMats;
+
+      if (roomId === 'cyan') {
+        // 候選位置 3：二樓 門廊一上來的那個指針轉盤（轉到上的時候出現並掛在指針上）
+        keySpawnSlots.push({
+          slotId: 'foyer_2f_dial',
+          roomId: 'cyan',
+          isDialSlot: true,
+          parent: foyerDoor1.wheelGroup,
+          position: [0, 0.24, 0.018],
+          rotation: [-0.08, 0.18, -foyerState.currentAngle],
+          scale: 0.65,
+        });
+      }
 
       // Door 2 (Other end on the 4m right-side wall at X = +7.0, Z = -1.5, facing -X, identical door + plaque)
       const foyerDoor2 = createPortalDoorAndDial({
@@ -15917,6 +17417,15 @@ export const Room3DScene: React.FC = () => {
       sideCabinetGroup.add(cabLilyPotGroup);
       exteriorVistaGroup.add(sideCabinetGroup);
 
+      // 候選位置 6：地下室 阿璃的宿舍區 洗手間陽台的櫃子前面地上
+      keySpawnSlots.push({
+        slotId: 'bath_balcony_cabinet_floor',
+        roomId: 'bathroom',
+        parent: exteriorVistaGroup,
+        position: [1.36, BALC_FLOOR_Y + 0.036, 3.72],
+        rotation: [-Math.PI / 2, 0, -0.40],
+      });
+
       // Cozy warm balcony soffit light illuminating the rocking chair, glass table, tissue pack, & 3-tier cabinet
       const balconyWarmLight = new THREE.PointLight(0xfff1d6, 1.25, 8.5, 1.08);
       balconyWarmLight.position.set(0.25, 2.55, 3.60);
@@ -16166,6 +17675,15 @@ export const Room3DScene: React.FC = () => {
       );
       flushBtn.position.set(0, 0.745, -0.18);
       toiletGroup.add(flushBtn);
+
+      // 候選位置 5：地下室 阿璃的宿舍區 洗手間馬桶水箱蓋上
+      keySpawnSlots.push({
+        slotId: 'bath_toilet_tank',
+        roomId: 'bathroom',
+        parent: toiletGroup,
+        position: [0.10, 0.748, -0.18],
+        rotation: [-Math.PI / 2, 0, 0.25],
+      });
 
       bathGroup.add(toiletGroup);
 
@@ -16969,6 +18487,97 @@ export const Room3DScene: React.FC = () => {
       benchLanternLight.position.set(-5.25, 0.85, 1.48);
       baseGroup.add(benchLanternLight);
 
+      // 7B. Hanging Cloth Tapestry ("洋流" 掛布) mounted on the Right Wall directly behind/above the Surveillance Monitor (X = +BSMT_W / 2, Z = 1.66)
+      const basementTapestryTex = textureLoader.load('/assets/basement_tapestry_tex.webp');
+      basementTapestryTex.colorSpace = THREE.SRGBColorSpace;
+      basementTapestryTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      extraRoomTexturesToDispose.push(basementTapestryTex);
+
+      const bsmtTapestryGroup = new THREE.Group();
+      const BSMT_TAP_H = (BSMT_H * 2) / 3; // 2/3 of basement wall height (~2.27m)
+      const BSMT_TAP_W = BSMT_TAP_H * (720 / 1220); // Exact 720 : 1220 ratio matching rectified banner (~1.34m)
+
+      const bsmtTapGeo = new THREE.PlaneGeometry(BSMT_TAP_W, BSMT_TAP_H, 20, 32);
+      const tapPos = bsmtTapGeo.attributes.position;
+      for (let i = 0; i < tapPos.count; i++) {
+        const tx = tapPos.getX(i);
+        const ty = tapPos.getY(i);
+        const ny = (ty + BSMT_TAP_H / 2) / BSMT_TAP_H; // 0 bottom .. 1 top
+        const nx = tx / (BSMT_TAP_W / 2); // -1 .. +1
+        // Gentle vertical cloth drape wave pinned along the top header
+        const drapeZ =
+          Math.sin(ny * Math.PI) * 0.011 +
+          Math.cos(nx * Math.PI * 1.5) * 0.005 * Math.sin(ny * Math.PI);
+        tapPos.setY(i, ty - BSMT_TAP_H / 2); // Pivot at top pinned edge y = 0
+        tapPos.setZ(i, 0.010 + drapeZ);
+      }
+      bsmtTapGeo.computeVertexNormals();
+
+      const bsmtTapFront = new THREE.Mesh(
+        bsmtTapGeo,
+        new THREE.MeshPhysicalMaterial({
+          map: basementTapestryTex,
+          color: 0xffffff,
+          roughness: 0.82,
+          metalness: 0.02,
+          sheen: 0.32,
+          sheenColor: new THREE.Color(0xfff5ee),
+        })
+      );
+      bsmtTapFront.castShadow = true;
+      bsmtTapFront.receiveShadow = true;
+      bsmtTapestryGroup.add(bsmtTapFront);
+
+      const bsmtTapBack = new THREE.Mesh(
+        new THREE.PlaneGeometry(BSMT_TAP_W, BSMT_TAP_H),
+        new THREE.MeshStandardMaterial({
+          color: 0x2a1412,
+          roughness: 0.92,
+          side: THREE.FrontSide,
+        })
+      );
+      bsmtTapBack.position.set(0, -BSMT_TAP_H / 2, 0.0075);
+      bsmtTapBack.rotation.y = Math.PI;
+      bsmtTapestryGroup.add(bsmtTapBack);
+
+      // Five red pushpins securing the wider top white hem cleanly against the wall
+      const tapPinHeadMat = new THREE.MeshStandardMaterial({
+        color: 0xdc2626,
+        roughness: 0.34,
+        metalness: 0.18,
+      });
+      const tapPinNeedleMat = new THREE.MeshStandardMaterial({
+        color: 0xcbd5e1,
+        roughness: 0.25,
+        metalness: 0.85,
+      });
+      [-0.46, -0.23, 0, 0.23, 0.46].map((f) => BSMT_TAP_W * f).forEach((px) => {
+        const pinNeedle = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.0018, 0.0018, 0.014, 8),
+          tapPinNeedleMat
+        );
+        pinNeedle.rotation.x = Math.PI / 2;
+        pinNeedle.position.set(px, -0.014, 0.007);
+        bsmtTapestryGroup.add(pinNeedle);
+
+        const pinHead = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.0072, 0.0058, 0.0095, 12),
+          tapPinHeadMat
+        );
+        pinHead.rotation.x = Math.PI / 2;
+        pinHead.position.set(px, -0.014, 0.015);
+        pinHead.castShadow = true;
+        bsmtTapestryGroup.add(pinHead);
+      });
+
+      bsmtTapestryGroup.position.set(BSMT_W / 2 - 0.004, 3.24, 1.66);
+      bsmtTapestryGroup.rotation.y = -Math.PI / 2;
+      baseGroup.add(bsmtTapestryGroup);
+
+      const bsmtTapSpot = new THREE.PointLight(0xfff1dc, 1.35, 5.8, 1.15);
+      bsmtTapSpot.position.set(BSMT_W / 2 - 1.15, 2.55, 1.66);
+      baseGroup.add(bsmtTapSpot);
+
       // 8. Staircase-Side Wall Corner Surveillance Desk, Giant Master Monitor & 1–5 Numbered Control Console
       const survDeskGroup = new THREE.Group();
       survDeskGroup.position.set(6.84, 0, 1.66);
@@ -17500,6 +19109,23 @@ export const Room3DScene: React.FC = () => {
 
     buildBasementRoom();
 
+    // 建立 7 把鑰匙實例（初始隨機分配位置於下方 updateDialVisuals 之後執行）
+    KEY_CONFIGS.forEach((cfg) => {
+      const k = createSceneKey({
+        id: cfg.id,
+        num: cfg.num,
+        name: cfg.name,
+        colorName: cfg.colorName,
+        hexColor: cfg.hexColor,
+        dotColor: cfg.dotColor,
+        roomId: 'lobby',
+        metalness: cfg.metalness,
+        roughness: cfg.roughness,
+      });
+      sceneKeysRef.current.push(k);
+    });
+    randomizeKeyPlacementsRef.current?.();
+
     // --- 6. ANIMATION & RENDER LOOP ---
     let animationId: number;
     const clock = new THREE.Clock();
@@ -17549,7 +19175,6 @@ export const Room3DScene: React.FC = () => {
       setActiveRoom('basement');
       setIsPinkNavOpen(false);
       setIsBathNavOpen(false);
-      setDakiSubtitle(null);
       if (lobbyRoomGroupRef.current) lobbyRoomGroupRef.current.visible = false;
       (['purple', 'green', 'gold', 'pink', 'cyan', 'cyan_b1', 'royalblue', 'brown', 'bathroom', 'basement'] as const).forEach((roomId) => {
         const rg = extraRoomsRef.current[roomId].roomGroup;
@@ -17583,7 +19208,6 @@ export const Room3DScene: React.FC = () => {
       setIsPinkNavOpen(false);
       setIsBathNavOpen(false);
       bathWindowOpenRef.current = true;
-      setDakiSubtitle(null);
       if (lobbyRoomGroupRef.current) lobbyRoomGroupRef.current.visible = false;
       (['purple', 'green', 'gold', 'pink', 'cyan', 'cyan_b1', 'royalblue', 'brown', 'bathroom', 'basement'] as const).forEach((roomId) => {
         const rg = extraRoomsRef.current[roomId].roomGroup;
@@ -17994,6 +19618,37 @@ export const Room3DScene: React.FC = () => {
       animateDialState(cyanFarDoorRef.current);
       animateDialState(cyanB1FarDoorRef.current);
 
+      // Animate 2F Foyer Dial Key dropping onto and hanging from the dial pointer
+      if (
+        dialAttachedKeyRef.current &&
+        dialKeyDroppedRef.current &&
+        !heldKeysRef.current.has(dialAttachedKeyRef.current.id)
+      ) {
+        const dkGroup = dialAttachedKeyRef.current.group;
+        const cyanDialAngle = extraRoomsRef.current.cyan.currentAngle;
+        if (dialKeyFallElapsedRef.current < 0.65) {
+          dialKeyFallElapsedRef.current = Math.min(0.65, dialKeyFallElapsedRef.current + delta);
+          const t = dialKeyFallElapsedRef.current;
+          if (t <= 0.30) {
+            const p = t / 0.30;
+            const curY = THREE.MathUtils.lerp(0.24, 0.062, p * p);
+            dkGroup.position.set(0, curY, 0.018);
+          } else {
+            const bp = (t - 0.30) / 0.35;
+            const catchBounceY = 0.062 + Math.sin(bp * Math.PI) * 0.018;
+            dkGroup.position.set(0, catchBounceY, 0.018);
+          }
+        } else {
+          dkGroup.position.set(0, 0.062, 0.018);
+        }
+        const catchSwing =
+          dialKeyFallElapsedRef.current < 0.65
+            ? Math.sin(dialKeyFallElapsedRef.current * 14) * 0.24 * (1 - dialKeyFallElapsedRef.current / 0.65)
+            : 0;
+        const gentleSway = Math.sin(clock.elapsedTime * 2.5) * 0.045;
+        dkGroup.rotation.set(-0.08, 0.18, -cyanDialAngle + catchSwing + gentleSway);
+      }
+
       // Smooth damped open/close animation for Beyblade X Compartment #1 lid on Pink Room desk
       if (beybladeLid1PivotRef.current) {
         const targetLidAngle = beybladeLid1OpenRef.current ? -1.72 : 0;
@@ -18268,7 +19923,6 @@ export const Room3DScene: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       if (portalSwapTimeoutRef.current !== null) window.clearTimeout(portalSwapTimeoutRef.current);
       if (portalFadeEndTimeoutRef.current !== null) window.clearTimeout(portalFadeEndTimeoutRef.current);
-      if (dakiSubtitleTimerRef.current !== null) window.clearTimeout(dakiSubtitleTimerRef.current);
       if (bookcaseAutoResetTimerRef.current !== null) window.clearTimeout(bookcaseAutoResetTimerRef.current);
       if (lowerPodAutoResetTimerRef.current !== null) window.clearTimeout(lowerPodAutoResetTimerRef.current);
 
@@ -18372,10 +20026,7 @@ export const Room3DScene: React.FC = () => {
       3: '樓梯',
     };
 
-    const cycleDialState = (roomState: ExtraRoomDoorState) => {
-      const nextIdx = (roomState.colorIdx + 1) % 4;
-      roomState.colorIdx = nextIdx;
-      roomState.targetAngle -= Math.PI / 2;
+    const updateDialVisuals = (roomState: ExtraRoomDoorState, nextIdx: number) => {
       const isSlotActive = roomState.hasColorSlot[nextIdx];
       const activeHex = roomState.colors[nextIdx];
 
@@ -18412,6 +20063,71 @@ export const Room3DScene: React.FC = () => {
         if (tex) {
           roomState.plaqueMat.map = tex;
           roomState.plaqueMat.needsUpdate = true;
+        }
+      }
+    };
+
+    const randomizeKeyPlacements = () => {
+      dialAttachedKeyRef.current = null;
+      dialKeyDroppedRef.current = false;
+      dialKeyFallElapsedRef.current = 0;
+
+      const cyanDoorState = extraRoomsRef.current.cyan;
+      cyanDoorState.colorIdx = 3;
+      cyanDoorState.targetAngle = Math.PI / 2;
+      cyanDoorState.currentAngle = Math.PI / 2;
+      updateDialVisuals(cyanDoorState, 3);
+
+      const shuffledSlots = [...keySpawnSlotsRef.current];
+      for (let i = shuffledSlots.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffledSlots[i], shuffledSlots[j]] = [shuffledSlots[j], shuffledSlots[i]];
+      }
+
+      sceneKeysRef.current.forEach((k, idx) => {
+        const slot = shuffledSlots[idx];
+        if (!slot) return;
+        k.roomId = slot.roomId;
+        k.inSecret = !!slot.inSecret;
+        k.slotId = slot.slotId;
+
+        slot.parent.add(k.group);
+        k.group.scale.setScalar(slot.scale ?? 1);
+        k.group.position.set(slot.position[0], slot.position[1], slot.position[2]);
+        k.group.rotation.set(slot.rotation[0], slot.rotation[1], slot.rotation[2]);
+
+        if (slot.isDialSlot) {
+          dialAttachedKeyRef.current = k;
+          k.group.visible = false;
+        } else {
+          k.group.visible = !heldKeysRef.current.has(k.id);
+        }
+      });
+    };
+    randomizeKeyPlacementsRef.current = randomizeKeyPlacements;
+
+    const cycleDialState = (roomState: ExtraRoomDoorState) => {
+      const nextIdx = (roomState.colorIdx + 1) % 4;
+      roomState.colorIdx = nextIdx;
+      roomState.targetAngle -= Math.PI / 2;
+      updateDialVisuals(roomState, nextIdx);
+
+      // 二樓門廊的門指針轉到上方 (idx === 0) 時，分配於該處的鑰匙掉出來並掛在指針上面
+      const dialKey = dialAttachedKeyRef.current;
+      if (
+        roomState === extraRoomsRef.current.cyan &&
+        nextIdx === 0 &&
+        dialKey &&
+        !heldKeysRef.current.has(dialKey.id) &&
+        !dialKeyDroppedRef.current
+      ) {
+        dialKeyDroppedRef.current = true;
+        dialKeyFallElapsedRef.current = 0;
+        dialKey.group.visible = true;
+        dialKey.group.position.set(0, 0.24, 0.018);
+        dialKey.group.rotation.set(-0.08, 0.18, -roomState.currentAngle);
+        if (typeof navigator !== 'undefined' && navigator.vibrate) {
+          try { navigator.vibrate([18, 35, 24]); } catch {}
         }
       }
     };
@@ -18514,7 +20230,6 @@ export const Room3DScene: React.FC = () => {
         setIsBathNavOpen(false);
         bathWindowOpenRef.current = false;
         if (targetRoom !== 'pink') {
-          setDakiSubtitle(null);
           if (lowerPodAutoResetTimerRef.current !== null) {
             window.clearTimeout(lowerPodAutoResetTimerRef.current);
             lowerPodAutoResetTimerRef.current = null;
@@ -18643,6 +20358,29 @@ export const Room3DScene: React.FC = () => {
       };
 
       const currentRoom = activeRoomRef.current;
+
+      // 0. Check 3D Keys collection tap (7 把鑰匙拾取判定)
+      for (const k of sceneKeysRef.current) {
+        if (!k.group.visible) continue;
+        if (k.roomId !== currentRoom) continue;
+        if (currentRoom === 'pink') {
+          const isSecret = viewLocationRef.current === 'secret';
+          if (k.inSecret && !isSecret) continue;
+          if (!k.inSecret && isSecret) continue;
+        }
+
+        const hits = raycasterRef.current.intersectObject(k.hitbox, false);
+        if (hits.length > 0) {
+          k.group.visible = false;
+          heldKeysRef.current.add(k.id);
+          setHeldKeysState(Array.from(heldKeysRef.current));
+
+          if (typeof navigator !== 'undefined' && navigator.vibrate) {
+            try { navigator.vibrate([18, 40, 26]); } catch {}
+          }
+          return true;
+        }
+      }
 
       // Special: Inside Pink Room Secret Archive Room (密室區), ONLY secret room elements (interior lever & exit doorway/back of bookcase) can be tapped!
       // This completely prevents raycasting through the doorway/walls into the main room's portal door, dial, corkboard, or capsule pod!
@@ -19231,7 +20969,6 @@ export const Room3DScene: React.FC = () => {
             isSlidingRef.current = true;
             setIsSlideFxActive(true);
             setIsPinkNavOpen(false);
-            setDakiSubtitle(null);
             if (typeof navigator !== 'undefined' && navigator.vibrate) {
               try { navigator.vibrate([16, 40, 24]); } catch {}
             }
@@ -19240,9 +20977,8 @@ export const Room3DScene: React.FC = () => {
         } else if (lowerPodHitboxRef.current) {
           const lowerHits = raycasterRef.current.intersectObject(lowerPodHitboxRef.current, false);
           if (lowerHits.length > 0) {
-            lowerPodClickCountRef.current += 1;
-            const count = lowerPodClickCountRef.current;
-            if (count >= 7) {
+            const heldCount = heldKeysRef.current.size;
+            if (heldCount >= 7) {
               lowerPodIsOpenRef.current = true;
               if (lowerPodAutoResetTimerRef.current !== null) {
                 window.clearTimeout(lowerPodAutoResetTimerRef.current);
@@ -19253,15 +20989,15 @@ export const Room3DScene: React.FC = () => {
                 lowerPodClickCountRef.current = 0;
                 lowerPodAutoResetTimerRef.current = null;
               }, 1250);
-              setDakiSubtitle("哢噠！膠囊艙下方的門打開了（1.25 秒後復位），快點擊溜滑梯滑下去！");
-            } else {
-              setDakiSubtitle("門被貼著「雜物」紙條鎖得很緊... (已點擊 " + count + "/7 次)");
+
+              // 開門後清空持有並重新隨機投放 7 把鑰匙
+              heldKeysRef.current.clear();
+              setHeldKeysState([]);
+              randomizeKeyPlacementsRef.current?.();
             }
-            if (dakiSubtitleTimerRef.current) clearTimeout(dakiSubtitleTimerRef.current);
-            dakiSubtitleTimerRef.current = window.setTimeout(() => setDakiSubtitle(null), 4500);
 
             if (typeof navigator !== 'undefined' && navigator.vibrate) {
-              try { navigator.vibrate(18); } catch {}
+              try { navigator.vibrate(heldCount >= 7 ? [24, 48, 36] : 18); } catch {}
             }
             return true;
           }
@@ -19300,34 +21036,16 @@ export const Room3DScene: React.FC = () => {
             const nextClick = dakiClickCountRef.current + 1;
             dakiClickCountRef.current = nextClick;
 
-            let msg = '';
             if (nextClick === 1) {
               dakiAnimModeRef.current = 'falling';
               dakiAnimElapsedRef.current = 0;
-              msg = dakiHasFlippedOnceRef.current ? '屁勒' : '欸？倒了？';
-            } else if (nextClick === 2 || nextClick === 4 || nextClick === 6) {
-              msg = '.....？';
-            } else if (nextClick === 3) {
+            } else if (nextClick === 3 || nextClick === 5) {
               dakiAnimModeRef.current = 'hop';
               dakiAnimElapsedRef.current = 0;
-              msg = '還滿想看背面是什麼圖的其實';
-            } else if (nextClick === 5) {
-              dakiAnimModeRef.current = 'hop';
-              dakiAnimElapsedRef.current = 0;
-              msg = '欸？黏住了嗎？不可能吧';
             } else if (nextClick >= 7) {
               dakiAnimModeRef.current = 'flip';
               dakiAnimElapsedRef.current = 0;
-              msg = '欸？';
             }
-
-            if (dakiSubtitleTimerRef.current !== null) {
-              window.clearTimeout(dakiSubtitleTimerRef.current);
-            }
-            setDakiSubtitle(msg);
-            dakiSubtitleTimerRef.current = window.setTimeout(() => {
-              setDakiSubtitle(null);
-            }, 4000);
 
             if (typeof navigator !== 'undefined' && navigator.vibrate) {
               try { navigator.vibrate(nextClick === 7 ? [18, 30, 18] : 14); } catch {}
@@ -19669,6 +21387,38 @@ export const Room3DScene: React.FC = () => {
         <div className="w-2.5 h-2.5 rounded-full border border-amber-300/70 bg-white/15 shadow-sm" />
       </div>
 
+      {/* 7 Keys Collection Progress Badge (7把鑰匙收集進度) */}
+      <div
+        className="pointer-events-auto absolute top-3 sm:top-4 right-3 sm:right-4 z-30 flex items-center gap-2 px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl bg-[#090e17]/88 backdrop-blur-md border border-amber-400/35 shadow-[0_4px_16px_rgba(0,0,0,0.6)] select-none"
+        title="膠囊艙下層需要同時持有 7 把鑰匙才能開門"
+      >
+        <div className="flex items-center gap-1.5 text-amber-400 text-xs sm:text-sm font-semibold tracking-wide">
+          <span className="text-sm">🗝️</span>
+          <span className="hidden sm:inline">鑰匙進度</span>
+          <span className="font-mono">{heldKeysState.length}/7</span>
+        </div>
+        <div className="flex items-center gap-1 sm:gap-1.5 pl-1.5 border-l border-white/15">
+          {KEY_CONFIGS.map((k) => {
+            const isHeld = heldKeysState.includes(k.id);
+            return (
+              <div
+                key={k.id}
+                title={`${k.name}（${k.colorName}）：${isHeld ? '已取得' : '未取得'}`}
+                className={`w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full border transition-all duration-300 ${
+                  isHeld
+                    ? 'scale-110 shadow-[0_0_8px_currentColor] border-white/80'
+                    : 'opacity-35 border-white/20'
+                }`}
+                style={{
+                  backgroundColor: k.dotColor,
+                  color: k.dotColor,
+                }}
+              />
+            );
+          })}
+        </div>
+      </div>
+
       {/* First-Person Slide Speed Streaks & Wind Glow FX Overlay */}
       {isSlideFxActive && (
         <div className="pointer-events-none fixed inset-0 z-30 overflow-hidden">
@@ -19864,17 +21614,6 @@ export const Room3DScene: React.FC = () => {
           onMouseUp={(e) => e.stopPropagation()}
         >
           <EscalatorMonologueSubpage onClose={handleCloseMonologue} />
-        </div>
-      )}
-
-      {/* Dakimakura Interaction Bottom Subtitle (抱抱枕點擊互動字幕) */}
-      {activeRoom === 'pink' && dakiSubtitle && (
-        <div
-          className="pointer-events-none fixed bottom-16 sm:bottom-6 left-1/2 -translate-x-1/2 z-40 whitespace-nowrap max-w-[94vw] px-4 sm:px-5 py-2 sm:py-2.5 rounded-xl bg-[#0b1320]/88 backdrop-blur-md border border-sky-200/35 text-sky-50 text-xs sm:text-base font-medium tracking-wide text-center shadow-[0_8px_28px_rgba(0,0,0,0.65)]"
-          role="status"
-          aria-live="polite"
-        >
-          {dakiSubtitle}
         </div>
       )}
 
