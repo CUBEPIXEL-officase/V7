@@ -86,6 +86,8 @@ export const Room3DScene: React.FC = () => {
   const isCalendarModalOpenRef = useRef(false);
   const [isMonologueOpen, setIsMonologueOpen] = useState(false);
   const isMonologueOpenRef = useRef(false);
+  const [isLobbyLetterOpen, setIsLobbyLetterOpen] = useState(false);
+  const isLobbyLetterOpenRef = useRef(false);
   const [viewLocation, setViewLocation] = useState<
     'table' | 'cabinet' | 'door' | 'door2' | 'center' | 'desk' | 'capsule' | 'board' | 'showcase' | 'tub' | 'balcony' | 'chair' | 'secret' | 'bsmt_desk'
   >('table');
@@ -121,6 +123,7 @@ export const Room3DScene: React.FC = () => {
   const hemiLightRef = useRef<THREE.HemisphereLight | null>(null);
   const lobbyRoomGroupRef = useRef<THREE.Group | null>(null);
   const wallCalendarHitboxRef = useRef<THREE.Mesh | null>(null);
+  const lobbyEnvelopeHitboxRef = useRef<THREE.Mesh | null>(null);
   const monologuePaperHitboxRef = useRef<THREE.Mesh | null>(null);
   const beybladeBoxHitboxRef = useRef<THREE.Mesh | null>(null);
   const beybladeLid1PivotRef = useRef<THREE.Group | null>(null);
@@ -3421,6 +3424,220 @@ export const Room3DScene: React.FC = () => {
     fanGroup.position.set(0.25, TEA_TABLE_HEIGHT + 0.0055, 0.01);
     fanGroup.rotation.set(-Math.PI / 2, 0, 0.22);
     centerTeaGroup.add(fanGroup);
+
+    // --- 4B-2. KRAFT PAPER ENVELOPE WITH LETTER INSIDE ON LOBBY TEA TABLE (大廳桌上的牛皮紙信封與信件) ---
+    const createKraftEnvelopeTextures = () => {
+      const colorCanvas = document.createElement('canvas');
+      colorCanvas.width = 512;
+      colorCanvas.height = 512;
+      const ctx = colorCanvas.getContext('2d');
+
+      const bumpCanvas = document.createElement('canvas');
+      bumpCanvas.width = 512;
+      bumpCanvas.height = 512;
+      const bctx = bumpCanvas.getContext('2d');
+
+      if (ctx && bctx) {
+        const grad = ctx.createLinearGradient(0, 0, 512, 512);
+        grad.addColorStop(0, '#c69d6f');
+        grad.addColorStop(0.5, '#bd9160');
+        grad.addColorStop(1, '#b18352');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 512, 512);
+
+        bctx.fillStyle = '#808080';
+        bctx.fillRect(0, 0, 512, 512);
+
+        // Organic recycled kraft paper pulp speckles & fine fibers
+        let ks = 409;
+        const krand = () => {
+          ks = (ks * 16807) % 2147483647;
+          return (ks - 1) / 2147483646;
+        };
+        for (let i = 0; i < 4800; i++) {
+          const px = krand() * 512;
+          const py = krand() * 512;
+          const r = 0.6 + krand() * 1.6;
+          ctx.fillStyle =
+            krand() > 0.55
+              ? 'rgba(82, 52, 26, 0.16)'
+              : krand() > 0.25
+                ? 'rgba(232, 206, 170, 0.14)'
+                : 'rgba(130, 90, 50, 0.12)';
+          ctx.fillRect(px, py, r, r * (1 + krand() * 1.4));
+
+          const bv = Math.floor(96 + krand() * 72);
+          bctx.fillStyle = `rgba(${bv},${bv},${bv},0.45)`;
+          bctx.fillRect(px, py, r + 0.5, r + 0.5);
+        }
+
+        // Subtle envelope fold border crease lines & warm sepia address line
+        ctx.strokeStyle = 'rgba(72, 46, 22, 0.20)';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(10, 10, 492, 492);
+
+        ctx.fillStyle = 'rgba(54, 34, 18, 0.78)';
+        ctx.font = 'bold 28px "Noto Sans TC", "PingFang TC", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('給各位迷你像素', 256, 245);
+
+        ctx.fillStyle = 'rgba(74, 48, 26, 0.58)';
+        ctx.font = '20px "Noto Sans TC", "PingFang TC", sans-serif';
+        ctx.fillText('2026 阿璃', 330, 320);
+
+        ctx.strokeStyle = 'rgba(74, 48, 26, 0.26)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(116, 264);
+        ctx.lineTo(396, 264);
+        ctx.stroke();
+      }
+
+      const colorTex = new THREE.CanvasTexture(colorCanvas);
+      colorTex.colorSpace = THREE.SRGBColorSpace;
+      colorTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      extraRoomTexturesToDispose.push(colorTex);
+
+      const bumpTex = new THREE.CanvasTexture(bumpCanvas);
+      bumpTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      extraRoomTexturesToDispose.push(bumpTex);
+
+      return { colorTex, bumpTex };
+    };
+    const { colorTex: kraftColorTex, bumpTex: kraftBumpTex } = createKraftEnvelopeTextures();
+
+    const createKraftLetterPeekTex = () => {
+      const lc = document.createElement('canvas');
+      lc.width = 512;
+      lc.height = 512;
+      const lctx = lc.getContext('2d');
+      if (lctx) {
+        lctx.fillStyle = '#fbf5e8';
+        lctx.fillRect(0, 0, 512, 512);
+
+        lctx.strokeStyle = 'rgba(180, 160, 130, 0.24)';
+        lctx.lineWidth = 2;
+        for (let y = 52; y < 480; y += 34) {
+          lctx.beginPath();
+          lctx.moveTo(36, y);
+          lctx.lineTo(476, y);
+          lctx.stroke();
+        }
+
+        lctx.fillStyle = 'rgba(56, 42, 30, 0.72)';
+        lctx.font = 'bold 22px "Noto Sans TC", "PingFang TC", sans-serif';
+        lctx.fillText('給各位迷你像素:', 44, 44);
+        lctx.font = '18px "Noto Sans TC", "PingFang TC", sans-serif';
+        lctx.fillText('我是涼海璃 你好 這是保持可愛漫研社的網站', 44, 78);
+        lctx.fillText('也是我一手操辦的地味偶像團企劃...', 44, 112);
+      }
+      const tex = new THREE.CanvasTexture(lc);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      extraRoomTexturesToDispose.push(tex);
+      return tex;
+    };
+    const kraftLetterPeekTex = createKraftLetterPeekTex();
+
+    const lobbyEnvelopeGroup = new THREE.Group();
+    const ENV_W = 0.23;
+    const ENV_D = 0.16;
+
+    const kraftFrontMat = new THREE.MeshPhysicalMaterial({
+      map: kraftColorTex,
+      bumpMap: kraftBumpTex,
+      bumpScale: 0.0008,
+      roughness: 0.88,
+      metalness: 0.0,
+      sheen: 0.25,
+      sheenColor: new THREE.Color(0xe6ccb0),
+    });
+    const kraftPlainMat = new THREE.MeshPhysicalMaterial({
+      color: 0xb98c5b,
+      bumpMap: kraftBumpTex,
+      bumpScale: 0.0008,
+      roughness: 0.90,
+      metalness: 0.0,
+      sheen: 0.22,
+      sheenColor: new THREE.Color(0xe2c7a8),
+    });
+    const letterPaperMat = new THREE.MeshStandardMaterial({
+      map: kraftLetterPeekTex,
+      roughness: 0.82,
+      metalness: 0.0,
+    });
+
+    // Bottom pocket backing resting flush on tabletop
+    const envBackPocket = new THREE.Mesh(
+      new THREE.BoxGeometry(ENV_W, 0.0018, ENV_D),
+      kraftPlainMat
+    );
+    envBackPocket.position.set(0, 0.0009, 0);
+    envBackPocket.castShadow = true;
+    envBackPocket.receiveShadow = true;
+    lobbyEnvelopeGroup.add(envBackPocket);
+
+    // Cream-ivory letter paper tucked inside the pocket, peeking ~2.6cm out the top opening (-Z)
+    const envLetterSheet = new THREE.Mesh(
+      new THREE.BoxGeometry(ENV_W - 0.024, 0.0014, ENV_D - 0.004),
+      letterPaperMat
+    );
+    envLetterSheet.position.set(0, 0.0026, -0.024);
+    envLetterSheet.castShadow = true;
+    envLetterSheet.receiveShadow = true;
+    lobbyEnvelopeGroup.add(envLetterSheet);
+
+    // Top front kraft pocket face overlapping the lower portion of the letter
+    const envFrontPocket = new THREE.Mesh(
+      new THREE.BoxGeometry(ENV_W, 0.0018, ENV_D - 0.004),
+      [
+        kraftPlainMat,
+        kraftPlainMat,
+        kraftFrontMat,
+        kraftPlainMat,
+        kraftPlainMat,
+        kraftPlainMat,
+      ]
+    );
+    envFrontPocket.position.set(0, 0.0044, 0.002);
+    envFrontPocket.castShadow = true;
+    envFrontPocket.receiveShadow = true;
+    lobbyEnvelopeGroup.add(envFrontPocket);
+
+    // Open triangular kraft flap hinged at the back mouth (-Z)
+    const flapShape = new THREE.Shape();
+    flapShape.moveTo(-ENV_W / 2, 0);
+    flapShape.lineTo(ENV_W / 2, 0);
+    flapShape.lineTo(0.012, 0.082);
+    flapShape.quadraticCurveTo(0, 0.088, -0.012, 0.082);
+    flapShape.closePath();
+
+    const flapGeo = new THREE.ExtrudeGeometry(flapShape, {
+      depth: 0.0014,
+      bevelEnabled: false,
+    });
+    flapGeo.rotateX(-Math.PI / 2);
+    const envOpenFlap = new THREE.Mesh(flapGeo, kraftPlainMat);
+    envOpenFlap.position.set(0, 0.0015, -ENV_D / 2 + 0.001);
+    envOpenFlap.rotation.x = 0.04;
+    envOpenFlap.castShadow = true;
+    envOpenFlap.receiveShadow = true;
+    lobbyEnvelopeGroup.add(envOpenFlap);
+
+    // Generous invisible hitbox covering both envelope body & open flap for effortless click/tap
+    const envHitbox = new THREE.Mesh(
+      new THREE.BoxGeometry(ENV_W + 0.06, 0.06, ENV_D + 0.12),
+      new THREE.MeshBasicMaterial({ visible: false })
+    );
+    envHitbox.position.set(0, 0.028, -0.03);
+    envHitbox.name = 'lobby_kraft_envelope_hitbox';
+    lobbyEnvelopeHitboxRef.current = envHitbox;
+    lobbyEnvelopeGroup.add(envHitbox);
+
+    // Placed cleanly in front-left foreground of the round tea table facing the seated viewer
+    lobbyEnvelopeGroup.position.set(-0.10, TEA_TABLE_HEIGHT, 0.37);
+    lobbyEnvelopeGroup.rotation.y = -0.14;
+    centerTeaGroup.add(lobbyEnvelopeGroup);
 
     // --- Floor Cushions (小坐墊 / 環繞圓几的和室厚坐墊) ---
     const cushionMatCharcoal = new THREE.MeshStandardMaterial({
@@ -19902,6 +20119,10 @@ export const Room3DScene: React.FC = () => {
           isMonologueOpenRef.current = false;
           setIsMonologueOpen(false);
         }
+        if (isLobbyLetterOpenRef.current) {
+          isLobbyLetterOpenRef.current = false;
+          setIsLobbyLetterOpen(false);
+        }
         if (isCyanFloorDialogOpenRef.current) {
           isCyanFloorDialogOpenRef.current = false;
           setIsCyanFloorDialogOpen(false);
@@ -20339,7 +20560,12 @@ export const Room3DScene: React.FC = () => {
 
     // Raycast tap handler: Dial spin, Portal Door room swap, Wall Calendar, Monologue Kraft Paper & Table Lamp toggle
     const handleSceneTap = (clientX: number, clientY: number): boolean => {
-      if (isCyanFloorDialogOpenRef.current || isCalendarModalOpenRef.current || isMonologueOpenRef.current) {
+      if (
+        isCyanFloorDialogOpenRef.current ||
+        isCalendarModalOpenRef.current ||
+        isMonologueOpenRef.current ||
+        isLobbyLetterOpenRef.current
+      ) {
         return false;
       }
 
@@ -20708,6 +20934,19 @@ export const Room3DScene: React.FC = () => {
         if (calHits.length > 0) {
           isCalendarModalOpenRef.current = true;
           setIsCalendarModalOpen(true);
+          if (typeof navigator !== 'undefined' && navigator.vibrate) {
+            try { navigator.vibrate(15); } catch {}
+          }
+          return true;
+        }
+      }
+
+      // 3b. Lobby Tea Table Kraft Envelope tap (點擊牛皮紙信封讀信)
+      if (currentRoom === 'lobby' && lobbyEnvelopeHitboxRef.current) {
+        const envHits = raycasterRef.current.intersectObject(lobbyEnvelopeHitboxRef.current, false);
+        if (envHits.length > 0) {
+          isLobbyLetterOpenRef.current = true;
+          setIsLobbyLetterOpen(true);
           if (typeof navigator !== 'undefined' && navigator.vibrate) {
             try { navigator.vibrate(15); } catch {}
           }
@@ -21234,7 +21473,8 @@ export const Room3DScene: React.FC = () => {
       isFoyerRoom(activeRoomRef.current) ||
       isCyanFloorDialogOpenRef.current ||
       isCalendarModalOpenRef.current ||
-      isMonologueOpenRef.current
+      isMonologueOpenRef.current ||
+      isLobbyLetterOpenRef.current
     ) {
       return;
     }
@@ -21358,6 +21598,11 @@ export const Room3DScene: React.FC = () => {
   const handleCloseMonologue = () => {
     isMonologueOpenRef.current = false;
     setIsMonologueOpen(false);
+  };
+
+  const handleCloseLobbyLetter = () => {
+    isLobbyLetterOpenRef.current = false;
+    setIsLobbyLetterOpen(false);
   };
 
   return (
@@ -21614,6 +21859,73 @@ export const Room3DScene: React.FC = () => {
           onMouseUp={(e) => e.stopPropagation()}
         >
           <EscalatorMonologueSubpage onClose={handleCloseMonologue} />
+        </div>
+      )}
+
+      {/* Lobby Kraft Envelope Letter Reader Modal (大廳牛皮紙信封讀信視窗) */}
+      {isLobbyLetterOpen && (
+        <div
+          className="fixed inset-0 z-[9050] flex items-center justify-center bg-[#090604]/80 backdrop-blur-sm p-4 sm:p-6 overflow-y-auto select-text"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleCloseLobbyLetter();
+          }}
+          onTouchStart={(e) => e.stopPropagation()}
+          onTouchMove={(e) => e.stopPropagation()}
+          onTouchEnd={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onMouseMove={(e) => e.stopPropagation()}
+          onMouseUp={(e) => e.stopPropagation()}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="給各位迷你像素的信"
+            onClick={(e) => e.stopPropagation()}
+            className="relative w-full max-w-xl rounded-2xl bg-[#b98c5b] p-2 sm:p-2.5 shadow-[0_28px_75px_rgba(0,0,0,0.78)] border border-[#d6b084]/45"
+          >
+            <div className="relative rounded-xl bg-[#fbf6eb] border border-[#e3d5be] px-6 py-6 sm:px-9 sm:py-8 text-[#2a1f16]">
+              <div className="flex items-center justify-between gap-4 pb-4 mb-5 border-b border-[#e5d9c3]">
+                <div className="flex items-center gap-2 text-xs text-[#7a6045] tracking-wider">
+                  <span>牛皮紙信封</span>
+                  <span aria-hidden="true">·</span>
+                  <span>2026 阿璃</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCloseLobbyLetter}
+                  aria-label="關閉信件"
+                  className="min-h-[40px] min-w-[40px] inline-flex items-center justify-center rounded-lg text-[#6a523a] hover:text-[#2a1f16] hover:bg-[#efe4cf] transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="text-[15px] sm:text-base leading-[1.9] tracking-[0.02em] whitespace-pre-line font-normal text-[#2a1f16]">
+                {`給各位迷你像素:
+我是涼海璃 你好 這是保持可愛漫研社的網站
+也是我一手操辦的地味偶像團企劃
+雖然我不知道你們什麼時候才會看到這個網站
+但我總是相信 只要有一天 你們都看得到的
+所以我希望我能給你們最好的網站
+2026 阿璃
+(備註:所有房間都可以探索喔
+去找吧 我把所有酷東東都放在那裡了
+這整個網站的任何一個角落 共藏著7把不同的鑰匙
+找到它們 打開密室吧 哈哈哈哈哈(?)`}
+              </div>
+
+              <div className="mt-7 pt-4 border-t border-[#e5d9c3] flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleCloseLobbyLetter}
+                  className="px-5 py-2.5 min-h-[40px] rounded-lg bg-[#8c6239] hover:bg-[#75502d] text-[#fdf9f0] text-sm font-medium tracking-wide transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  收起信件
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
